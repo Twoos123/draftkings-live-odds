@@ -1,26 +1,104 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
-
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  color-scheme: light;
+  --background: #f5f6f8;
+  --surface: #ffffff;
+  --cell: #f1f3f6;
+  --border: #e2e5ea;
+  --foreground: #0e1116;
+  --muted: #5d6673;
+  --live: #16a34a;
+  --warn: #b45309;
+  --danger: #dc2626;
+  --up: #15803d;
+  --down: #dc2626;
+  --flash-up: rgb(22 163 74 / 0.24);
+  --flash-down: rgb(220 38 38 / 0.2);
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+    color-scheme: dark;
+    --background: #0a0d11;
+    --surface: #11151b;
+    --cell: #19202a;
+    --border: #232b36;
+    --foreground: #e7eaef;
+    --muted: #8a94a3;
+    --live: #22c55e;
+    --warn: #f59e0b;
+    --danger: #f87171;
+    --up: #4ade80;
+    --down: #f87171;
+    --flash-up: rgb(74 222 128 / 0.22);
+    --flash-down: rgb(248 113 113 / 0.22);
   }
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-surface: var(--surface);
+  --color-cell: var(--cell);
+  --color-border: var(--border);
+  --color-foreground: var(--foreground);
+  --color-muted: var(--muted);
+  --color-live: var(--live);
+  --color-warn: var(--warn);
+  --color-danger: var(--danger);
+  --color-up: var(--up);
+  --color-down: var(--down);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-geist-sans), system-ui, sans-serif;
+}
+
+/* A price that just moved: fades from green (up) or red (down) back to normal. */
+@keyframes flash-up {
+  from {
+    background-color: var(--flash-up);
+  }
+  to {
+    background-color: var(--cell);
+  }
+}
+
+@keyframes flash-down {
+  from {
+    background-color: var(--flash-down);
+  }
+  to {
+    background-color: var(--cell);
+  }
+}
+
+.flash-up {
+  animation: flash-up 4s ease-out;
+}
+
+.flash-down {
+  animation: flash-down 4s ease-out;
+}
+
+/* Jumping to a game from "Latest line moves" briefly highlights it. */
+@keyframes target-glow {
+  from {
+    background-color: var(--cell);
+  }
+  to {
+    background-color: transparent;
+  }
+}
+
+.game-card:target {
+  animation: target-glow 2s ease-out;
+}
+
+html {
+  scroll-behavior: smooth;
 }
