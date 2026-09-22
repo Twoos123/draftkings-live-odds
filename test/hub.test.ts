@@ -40,7 +40,6 @@ class FakeFeed implements Feed {
   }
 }
 
-const GAME = "34118180";
 const priceChange = (american: number) =>
   deltaOf((d) => d.change.selections.push({ id: "0ML84695613_3", displayOdds: odds(american, 1 + american / 100) }));
 
@@ -48,116 +47,77 @@ function setup(fetchSnapshot?: () => Promise<DkSnapshot>) {
   const base = loadSnapshot();
   const fetch = vi.fn(fetchSnapshot ?? (async () => structuredClone(base)));
   let feed!: FakeFeed;
-  const hub = new OddsHub({
-    fetchSnapshot: fetch,
-    createFeed: (h) => (feed = new FakeFeed(h)),
-    sink: noopSink,
-    now: () => Date.now(),
-    instanceId: "test",
-  });
-  const messages: StreamMessage[] = [];
-  const unsubscribe = hub.subscribe((m) => messages.push(m));
-  const last = <T extends StreamMessage["type"]>(type: T) => messages.filter((m) => m.type === type).at(-1) as Extract<StreamMessage, { type: T }>;
-  return { hub, feed, fetch, messages, last, unsubscribe, base };
+  const hub = new OddsHub({ fetchSnapshot: fetch, createFeed: (h) => (feed = new FakeFeed(h)), sink: noopSink, now: () => Date.now(), instanceId: "test" });
+  const messages: { msg: StreamMessage; frame: string }[] = [];
+  const listen = () => hub.subscribe((msg, frame) => messages.push({ msg, frame: new TextDecoder().decode(frame) }));
+  const unsubscribe = listen();
+  const last = <T extends StreamMessage["type"]>(type: T) => messages.filter((m) => m.msg.type === type).at(-1)?.msg as Extract<StreamMessage, { type: T }>;
+  return { hub, feed, fetch, messages, last, unsubscribe, listen };
 }
-
-const awayMoneyline = (games: { id: string; markets: { moneyline?: { selections: { american: number }[] } } }[]) =>
-  games.find((g) => g.id === GAME)!.markets.moneyline!.selections[0];
 
 beforeEach(() => vi.useFakeTimers({ now: new Date("2026-09-22T20:00:00Z") }));
 afterEach(() => vi.useRealTimers());
 
-describe("OddsHub", () => {
-  it("snapshots once subscribed, then streams live moves with timing", async () => {
+describe("OddsHub (push-feed relay)", () => {
+  it("relays every DraftKings update to browsers, with DK's timing", () => {
     const { feed, messages, last } = setup();
-    expect(messages[0]).toMatchObject({ type: "status", status: { health: "starting" } });
-
+    expect(messages[0].msg).toMatchObject({ type: "status", status: { health: "starting" } });
     feed.ack();
-    await vi.waitFor(() => expect(last("snapshot")).toBeDefined());
-    expect(last("snapshot").games).toHaveLength(32);
-    expect(last("snapshot").status.health).toBe("live");
+    expect(last("status").status.health).toBe("live");
 
     feed.push(priceChange(250));
-    const update = last("update");
-    expect(update.moves).toEqual([expect.objectContaining({ gameId: GAME, market: "moneyline", side: "away", source: "ws", from: expect.objectContaining({ american: 235 }), to: expect.objectContaining({ american: 250 }) })]);
-    expect(update.timing?.dkCreatedAt).toBeTruthy();
-    expect(awayMoneyline(update.games)).toMatchObject({ american: 250, prev: { american: 235 } });
+    const relayed = last("delta");
+    expect(relayed.delta.change.selections[0]).toMatchObject({ id: "0ML84695613_3" });
+    expect(relayed.timing.dkCreatedAt).toBeTruthy();
+    expect(messages.at(-1)!.frame.startsWith("event: delta\ndata: ")).toBe(true);
   });
 
-  it("replays updates that land while a snapshot request is in flight", async () => {
-    const base = loadSnapshot();
-    let release!: (s: DkSnapshot) => void;
-    const { feed, hub, last } = setup(() => new Promise((r) => (release = r)));
-    feed.ack(); // starts the first snapshot request
-    feed.push(priceChange(260)); // arrives before the (older) snapshot comes back
-    release(structuredClone(base));
-    await vi.waitFor(() => expect(last("snapshot")).toBeDefined());
-    expect(awayMoneyline(last("snapshot").games).american).toBe(260);
-    expect(hub.status().counters.resyncCorrections).toBe(0);
-  });
-
-  it("counts and broadcasts drift that a periodic resync finds", async () => {
-    const snap = loadSnapshot();
-    const { feed, hub, last } = setup(async () => structuredClone(snap));
+  it("replays the last few seconds of updates to a browser that just connected", () => {
+    const { feed, listen, messages } = setup();
     feed.ack();
-    await vi.waitFor(() => expect(last("snapshot")).toBeDefined());
+    feed.push(priceChange(250));
+    vi.advanceTimersByTime(3_000);
+    feed.push(priceChange(255));
+    vi.advanceTimersByTime(12_000);
+    feed.push(priceChange(260)); // the first one is now outside the 10s window
 
-    // DK changed a price and we never got the delta.
-    snap.selections.find((s) => s.id === "0ML84695613_3")!.displayOdds = odds(300, 4);
-    await vi.advanceTimersByTimeAsync(61_000);
-    await vi.waitFor(() => expect(last("update")).toBeDefined());
-    expect(last("update").moves).toEqual([expect.objectContaining({ source: "resync", to: expect.objectContaining({ american: 300 }) })]);
-    expect(hub.status().counters.resyncCorrections).toBe(1);
+    const before = messages.length;
+    listen();
+    const joined = messages.slice(before);
+    expect(joined[0].msg.type).toBe("status");
+    const replays = joined.filter((m) => m.frame.startsWith("event: replay"));
+    expect(replays.map((m) => (m.msg as Extract<StreamMessage, { type: "delta" }>).delta.change.selections[0].displayOdds?.american)).toEqual(["+260"]);
   });
 
-  it("reports DraftKings being unreachable, then recovers", async () => {
-    let fail = true;
-    const base = loadSnapshot();
-    const { hub, last } = setup(async () => {
-      if (fail) throw new Error("DraftKings snapshot returned HTTP 503");
-      return structuredClone(base);
-    });
-    await vi.advanceTimersByTimeAsync(3_100); // push feed never comes up; grace timer fetches
-    expect(hub.status()).toMatchObject({ health: "down", snapshotError: "DraftKings snapshot returned HTTP 503" });
-    expect(last("status").status.health).toBe("down");
-
-    fail = false;
-    await vi.advanceTimersByTimeAsync(25_000); // fallback polling with backoff
-    expect(last("snapshot").games).toHaveLength(32);
-    expect(hub.status().snapshotError).toBeNull();
-  });
-
-  it("falls back to polling when the push feed drops, and goes stale if that fails too", async () => {
-    let fail = false;
-    const base = loadSnapshot();
-    const { feed, hub, fetch, last } = setup(async () => {
-      if (fail) throw new Error("timed out");
-      return structuredClone(base);
+  it("keeps relaying when DraftKings blocks the server from the REST board", async () => {
+    const { feed, hub, last } = setup(async () => {
+      throw new Error("DraftKings snapshot returned HTTP 403 (blocked by Akamai)");
     });
     feed.ack();
-    await vi.waitFor(() => expect(last("snapshot")).toBeDefined());
+    await vi.advanceTimersByTimeAsync(10);
+    expect(hub.status()).toMatchObject({ health: "live", serverBoard: { snapshotError: "DraftKings snapshot returned HTTP 403 (blocked by Akamai)" } });
+    feed.push(priceChange(250));
+    expect(last("delta")).toBeDefined();
+  });
+
+  it("keeps a server-side board where the REST board is reachable", async () => {
+    const { feed, hub } = setup();
+    feed.ack();
+    await vi.advanceTimersByTimeAsync(10);
+    feed.push(priceChange(250));
+    expect(hub.games()).toHaveLength(32);
+    expect(hub.status().serverBoard).toMatchObject({ snapshotError: null, moves: 1 });
+  });
+
+  it("reports the push feed reconnecting, then down", async () => {
+    const { feed, hub } = setup();
+    feed.ack();
     feed.drop();
-    expect(hub.status().health).toBe("degraded");
-
-    const before = fetch.mock.calls.length;
-    await vi.advanceTimersByTimeAsync(21_000);
-    expect(fetch.mock.calls.length).toBeGreaterThanOrEqual(before + 2); // ~every 10s
-    expect(hub.status().health).toBe("degraded");
-
-    fail = true;
-    await vi.advanceTimersByTimeAsync(60_000);
-    expect(hub.status().health).toBe("stale");
-    expect(last("status").status.health).toBe("stale");
-  });
-
-  it("resyncs when an update references something it doesn't know", async () => {
-    const { feed, fetch, hub, last } = setup();
+    expect(hub.status().health).toBe("reconnecting");
+    await vi.advanceTimersByTimeAsync(31_000);
+    expect(hub.status().health).toBe("down");
     feed.ack();
-    await vi.waitFor(() => expect(last("snapshot")).toBeDefined());
-    const calls = fetch.mock.calls.length;
-    feed.push(deltaOf((d) => d.change.selections.push({ id: "0HC999N300_1", displayOdds: odds(-110, 1.91) })));
-    expect(fetch.mock.calls.length).toBe(calls + 1);
-    expect(hub.status().counters.unresolved).toBe(1);
+    expect(hub.status().health).toBe("live");
   });
 
   it("measures latency on DraftKings' clock even when ours is off", async () => {
@@ -167,7 +127,6 @@ describe("OddsHub", () => {
     feed.state = "open";
     feed.subscribed = true;
     feed.h.onSubscribed({ sentAt: now - 40, receivedAt: now, dkTime: now - 20 + 400 });
-    await vi.waitFor(() => expect(last("snapshot")).toBeDefined());
     expect(hub.status().dkClockOffsetMs).toBe(400);
 
     // DK created a change 80ms ago (its clock) and its socket sent it 30ms ago.
@@ -175,7 +134,7 @@ describe("OddsHub", () => {
     feed.h.onUpdate(priceChange(250), { createdTime: new Date(dkNow - 80).toISOString(), publishedTime: null, wsPublishedTime: new Date(dkNow - 30).toISOString() }, Date.now());
     expect(hub.status().dkToServerMs?.p50).toBe(80);
     expect(hub.status().wireMs?.p50).toBe(30);
-    expect(Date.parse(last("update").sentAt)).toBeCloseTo(dkNow, -2);
+    expect(Date.parse(last("delta").sentAt)).toBe(dkNow);
     expect(hub.now() - Date.now()).toBe(400);
   });
 

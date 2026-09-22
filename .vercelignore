@@ -1,0 +1,6 @@
+# Never upload local secrets or tooling; Vercel builds from source.
+.env*
+!.env.example
+.claude
+.next
+node_modules

@@ -1,3 +1,5 @@
+import type { DkDelta } from "../dk/schema";
+
 // The clean shape we serve, independent of DraftKings' wire format:
 // game -> market -> side -> line + odds. Shared by the server and the browser.
 
@@ -71,7 +73,8 @@ export interface UpdateTiming {
   serverReceivedAt: string;
 }
 
-export type FeedHealth = "starting" | "live" | "degraded" | "stale" | "down";
+/** The server's connection to DraftKings' push feed. */
+export type FeedHealth = "starting" | "live" | "reconnecting" | "down";
 
 export interface LatencyStats {
   p50: number;
@@ -89,27 +92,37 @@ export interface FeedStatus {
   ws: "idle" | "connecting" | "open" | "closed";
   subscribed: boolean;
   lastMessageAt: string | null;
-  lastSnapshotAt: string | null;
-  snapshotError: string | null;
   lastError: string | null;
   /** DK created the change -> our server received it. */
   dkToServerMs: LatencyStats | null;
   /** DK's websocket server sent it -> our server received it. */
   wireMs: LatencyStats | null;
-  counters: {
-    updates: number;
+  counters: { updates: number; parseIssues: number; reconnects: number };
+  /**
+   * The server's own copy of the board, used for /api/odds and ClickHouse.
+   * Only works where DraftKings' REST endpoint accepts the server's IP; on
+   * Vercel it's blocked by Akamai and the board lives in the browser instead.
+   */
+  serverBoard: {
+    lastSnapshotAt: string | null;
+    snapshotError: string | null;
     moves: number;
-    resyncs: number;
-    /** Prices a REST re-check found wrong. Should stay 0 if delta handling is right. */
     resyncCorrections: number;
-    unresolved: number;
-    parseIssues: number;
-    reconnects: number;
   };
   sink: { enabled: boolean; lastError: string | null; written: number };
 }
 
+/** The browser's copy of the board (see BoardEngine). */
+export interface BoardStatus {
+  hasData: boolean;
+  /** Browser time of the last successful load from DraftKings. */
+  lastSnapshotAt: number | null;
+  snapshotError: string | null;
+  counters: { moves: number; resyncs: number; resyncCorrections: number; unresolved: number };
+}
+
+/** Server-Sent Events from /api/stream. */
 export type StreamMessage =
-  | { type: "snapshot"; games: Game[]; status: FeedStatus; sentAt: string }
-  | { type: "update"; games: Game[]; removed: string[]; moves: Move[]; timing: UpdateTiming | null; sentAt: string }
-  | { type: "status"; status: FeedStatus; sentAt: string };
+  | { type: "status"; status: FeedStatus; sentAt: string }
+  /** One DraftKings push update, passed through as-is for the browser's board. */
+  | { type: "delta"; delta: DkDelta; timing: UpdateTiming; sentAt: string };

@@ -1,4 +1,4 @@
-import type { FeedStatus } from "./types";
+import type { BoardStatus, FeedStatus } from "./types";
 
 export type Tone = "live" | "warn" | "error" | "neutral";
 
@@ -11,6 +11,17 @@ export interface Freshness {
   dim: boolean;
 }
 
+export interface FreshnessInput {
+  /** This browser's stream from our server. */
+  connection: "connecting" | "open" | "reconnecting";
+  /** Browser time we last heard from our server. */
+  lastMessageAt: number | null;
+  /** Our server's connection to DraftKings' push feed. */
+  feed: FeedStatus | null;
+  /** The board this browser loaded from DraftKings. */
+  board: BoardStatus;
+}
+
 export function formatAgo(ms: number): string {
   const s = Math.max(0, Math.round(ms / 1000));
   if (s < 5) return "just now";
@@ -20,18 +31,8 @@ export function formatAgo(ms: number): string {
   return `${Math.floor(m / 60)}h ${m % 60}m ago`;
 }
 
-/**
- * What to tell the viewer about how current the numbers are. `serverNow` is
- * the browser's clock corrected to the server's; `lastMessageAt` is when the
- * browser last heard from our server (browser clock).
- */
-export function describeFreshness(
-  status: FeedStatus | null,
-  connection: "connecting" | "open" | "reconnecting",
-  lastMessageAt: number | null,
-  now: number,
-  serverNow: number,
-): Freshness {
+/** Everything is on the browser's clock here. */
+export function describeFreshness({ connection, lastMessageAt, feed, board }: FreshnessInput, now: number): Freshness {
   if (connection !== "open" && lastMessageAt !== null) {
     const silent = now - lastMessageAt;
     return {
@@ -41,43 +42,42 @@ export function describeFreshness(
       dim: silent > 15_000,
     };
   }
-  if (!status) return { tone: "neutral", label: "Connecting", detail: null, dim: false };
 
-  const age = (iso: string | null) => (iso ? formatAgo(serverNow - Date.parse(iso)) : "never");
-  const lastConfirmed = [status.lastSnapshotAt, status.lastMessageAt].filter(Boolean).sort().at(-1) ?? null;
-
-  switch (status.health) {
-    case "live":
-      return { tone: "live", label: "Live", detail: null, dim: false };
-    case "starting":
-      return { tone: "neutral", label: "Connecting", detail: "Connecting to DraftKings…", dim: false };
-    case "degraded":
-      return status.subscribed
-        ? {
-            tone: "warn",
-            label: "Live",
-            detail: `Live updates are flowing, but the periodic full check with DraftKings is failing (${status.snapshotError ?? "unknown error"}).`,
-            dim: false,
-          }
-        : {
-            tone: "warn",
-            label: "Delayed",
-            detail: `DraftKings' live feed dropped. Re-checking every 10 seconds until it's back (last check ${age(status.lastSnapshotAt)}).`,
-            dim: false,
-          };
-    case "stale":
-      return {
-        tone: "error",
-        label: "Stale",
-        detail: `Can't reach DraftKings. These odds were last confirmed ${age(lastConfirmed)} and may be out of date.${status.snapshotError ? ` (${status.snapshotError})` : ""}`,
-        dim: true,
-      };
-    case "down":
-      return {
-        tone: "error",
-        label: "Offline",
-        detail: `Can't reach DraftKings right now${status.snapshotError ? ` (${status.snapshotError})` : ""}. Retrying automatically.`,
-        dim: true,
-      };
+  if (!board.hasData) {
+    return board.snapshotError
+      ? { tone: "error", label: "Offline", detail: `Couldn't load the odds from DraftKings (${board.snapshotError}). Retrying automatically.`, dim: true }
+      : { tone: "neutral", label: "Connecting", detail: null, dim: false };
   }
+
+  if (!feed || feed.health === "starting") {
+    return { tone: "neutral", label: "Connecting", detail: "Connecting to DraftKings' live feed…", dim: false };
+  }
+
+  if (feed.health === "live") {
+    return board.snapshotError
+      ? {
+          tone: "warn",
+          label: "Live",
+          detail: `Live updates are flowing, but the periodic full check with DraftKings is failing (${board.snapshotError}).`,
+          dim: false,
+        }
+      : { tone: "live", label: "Live", detail: null, dim: false };
+  }
+
+  // Push feed reconnecting or down: the browser falls back to re-checking DraftKings every 10s.
+  const checkedAgo = board.lastSnapshotAt === null ? Infinity : now - board.lastSnapshotAt;
+  if (!board.snapshotError && checkedAgo <= 30_000) {
+    return {
+      tone: "warn",
+      label: "Delayed",
+      detail: `DraftKings' live feed dropped. Re-checking every 10 seconds until it's back (last check ${formatAgo(checkedAgo)}).`,
+      dim: false,
+    };
+  }
+  return {
+    tone: "error",
+    label: "Stale",
+    detail: `DraftKings' live feed is down and these odds were last confirmed ${formatAgo(checkedAgo)}, so they may be out of date.${board.snapshotError ? ` (${board.snapshotError})` : ""}`,
+    dim: true,
+  };
 }

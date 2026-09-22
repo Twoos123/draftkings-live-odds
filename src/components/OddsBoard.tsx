@@ -6,7 +6,7 @@ import { useOddsFormat } from "@/hooks/useOddsFormat";
 import { useOddsStream, type ClientLatency } from "@/hooks/useOddsStream";
 import type { OddsFormat } from "@/lib/odds/format";
 import { describeFreshness, formatAgo, type Freshness, type Tone } from "@/lib/odds/freshness";
-import type { FeedStatus, Game } from "@/lib/odds/types";
+import type { BoardStatus, FeedStatus, Game } from "@/lib/odds/types";
 import { FeedDetails } from "./FeedDetails";
 import { GameCard, GRID } from "./GameCard";
 import { HowToRead } from "./HowToRead";
@@ -53,9 +53,9 @@ function seconds(ms: number) {
   return ms < 1000 ? `${Math.round(ms)} ms` : `${(ms / 1000).toFixed(1)} s`;
 }
 
-/** "≈0.5 s behind DraftKings": measured end to end when a line has moved, else DK→server + server→you. */
-function LatencyBadge({ latency, status }: { latency: ClientLatency; status: FeedStatus | null }) {
-  const dk = status?.dkToServerMs;
+/** "≈0.2 s behind DraftKings": measured end to end once updates arrive, else DK→server + server→you. */
+function LatencyBadge({ latency, feed }: { latency: ClientLatency; feed: FeedStatus | null }) {
+  const dk = feed?.dkToServerMs;
   const hop = latency.serverToBrowser;
   // Until the browser has timed its own hop, the server's DK → server figure is the best estimate.
   const total = latency.endToEnd?.p50 ?? (dk ? dk.p50 + (hop?.p50 ?? 0) : null);
@@ -77,8 +77,8 @@ function LatencyBadge({ latency, status }: { latency: ClientLatency; status: Fee
   );
 }
 
-function StatusPill({ fresh, status, serverNow }: { fresh: Freshness; status: FeedStatus | null; serverNow: number }) {
-  const checked = status?.lastSnapshotAt ? `Last full check with DraftKings ${formatAgo(serverNow - Date.parse(status.lastSnapshotAt))}` : null;
+function StatusPill({ fresh, board, now }: { fresh: Freshness; board: BoardStatus; now: number }) {
+  const checked = board.lastSnapshotAt !== null ? `Last full check with DraftKings ${formatAgo(now - board.lastSnapshotAt)}` : null;
   const title = fresh.tone === "live" ? ["Connected to DraftKings' live feed. Prices update the moment a line moves.", checked].filter(Boolean).join("\n") : (fresh.detail ?? "");
   return (
     <span title={title} className="inline-flex items-center gap-2 rounded-full border border-border bg-surface px-3 py-1.5 text-sm font-medium" aria-live="polite">
@@ -107,7 +107,7 @@ function FormatToggle({ format, onChange }: { format: OddsFormat; onChange: (f: 
 }
 
 export function OddsBoard() {
-  const { games, status, connection, lastMessageAt, latency, refresh, refreshing, clockOffsetMs } = useOddsStream();
+  const { games, feed, board, connection, lastMessageAt, latency, refresh, refreshing, clockOffsetMs } = useOddsStream();
   const [format, setFormat] = useOddsFormat();
   const [query, setQuery] = useState("");
   const now = useNow();
@@ -125,8 +125,8 @@ export function OddsBoard() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [sorted, query, todayKey],
   );
-  const fresh = describeFreshness(status, connection, lastMessageAt, now, serverNow);
-  const loading = games.size === 0 && (!status || status.health === "starting" || connection === "connecting");
+  const fresh = describeFreshness({ connection, lastMessageAt, feed, board }, now);
+  const loading = !board.hasData && !board.snapshotError;
 
   return (
     <main className="mx-auto w-full max-w-4xl px-4 pb-12 sm:px-6">
@@ -141,8 +141,8 @@ export function OddsBoard() {
 
       <div className="sticky top-0 z-20 -mx-4 mt-5 border-b border-border bg-background/85 px-4 py-3 backdrop-blur sm:-mx-6 sm:px-6">
         <div className="flex flex-wrap items-center gap-2">
-          <StatusPill fresh={fresh} status={status} serverNow={serverNow} />
-          <LatencyBadge latency={latency} status={status} />
+          <StatusPill fresh={fresh} board={board} now={now} />
+          <LatencyBadge latency={latency} feed={feed} />
           {/* Phones: status + Refresh on one row, search + format below. Wider: one row. */}
           <button
             type="button"
@@ -189,7 +189,7 @@ export function OddsBoard() {
         {loading && <LoadingBoard />}
         {!loading && games.size === 0 && (
           <p className="mt-8 rounded-xl border border-border bg-surface px-4 py-8 text-center text-muted">
-            {status?.health === "down" ? "No odds to show yet. We'll load them as soon as DraftKings responds." : "DraftKings has no upcoming NFL games listed right now."}
+            {board.hasData ? "DraftKings has no upcoming NFL games listed right now." : "No odds to show yet. We'll load them as soon as DraftKings responds."}
           </p>
         )}
         {games.size > 0 && groups.length === 0 && (
@@ -220,7 +220,7 @@ export function OddsBoard() {
         ))}
       </div>
 
-      <FeedDetails status={status} latency={latency} serverNow={serverNow} />
+      <FeedDetails feed={feed} board={board} latency={latency} now={now} serverNow={serverNow} />
 
       <footer className="mt-6 text-xs leading-relaxed text-muted">
         Odds from DraftKings Sportsbook (New Jersey), pushed from DraftKings&apos; live feed and fully re-checked every minute. Main markets only. Not

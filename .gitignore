@@ -43,3 +43,5 @@ next-env.d.ts
 
 # local tool config
 /.claude/
+
+.vercel

@@ -1,15 +1,16 @@
 import { getHub } from "@/lib/server";
 
 /**
- * The current board as JSON, for scripts and anyone without SSE.
- * Served from the live hub when this instance has one; otherwise fetched
- * from DraftKings (at most 5s old). `?fresh=1` always re-fetches.
+ * The server's own copy of the board as JSON (at most 5s old; `?fresh=1`
+ * re-fetches). Works where DraftKings' REST endpoint accepts the server's IP.
+ * On Vercel, Akamai blocks it, so this returns 503 with the reason; the page
+ * itself loads the board in the browser instead.
  */
 export async function GET(req: Request) {
   const fresh = new URL(req.url).searchParams.has("fresh");
-  const { games, status } = await getHub().getBoard(fresh ? 0 : 5_000);
+  const { games, asOf, error } = await getHub().getBoard(fresh ? 0 : 5_000);
   return Response.json(
-    { asOf: status.lastSnapshotAt, health: status.health, error: status.snapshotError, games },
-    { status: games.length === 0 && status.health === "down" ? 503 : 200, headers: { "Cache-Control": "no-store" } },
+    { asOf, error, games },
+    { status: games.length === 0 && error ? 503 : 200, headers: { "Cache-Control": "no-store" } },
   );
 }

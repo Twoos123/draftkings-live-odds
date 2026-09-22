@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { describeFreshness, formatAgo } from "@/lib/odds/freshness";
-import type { FeedStatus } from "@/lib/odds/types";
+import { describeFreshness, formatAgo, type FreshnessInput } from "@/lib/odds/freshness";
+import type { BoardStatus, FeedStatus } from "@/lib/odds/types";
 
 const NOW = Date.parse("2026-09-22T20:00:00Z");
 
-function status(over: Partial<FeedStatus>): FeedStatus {
+function feed(over: Partial<FeedStatus> = {}): FeedStatus {
   return {
     health: "live",
     serverTime: new Date(NOW).toISOString(),
@@ -13,35 +13,48 @@ function status(over: Partial<FeedStatus>): FeedStatus {
     ws: "open",
     subscribed: true,
     lastMessageAt: null,
-    lastSnapshotAt: new Date(NOW - 20_000).toISOString(),
-    snapshotError: null,
     lastError: null,
     dkToServerMs: null,
     wireMs: null,
-    counters: { updates: 0, moves: 0, resyncs: 1, resyncCorrections: 0, unresolved: 0, parseIssues: 0, reconnects: 0 },
+    counters: { updates: 0, parseIssues: 0, reconnects: 0 },
+    serverBoard: { lastSnapshotAt: null, snapshotError: "DraftKings snapshot returned HTTP 403 (blocked by Akamai)", moves: 0, resyncCorrections: 0 },
     sink: { enabled: false, lastError: null, written: 0 },
     ...over,
   };
 }
 
+function board(over: Partial<BoardStatus> = {}): BoardStatus {
+  return { hasData: true, lastSnapshotAt: NOW - 20_000, snapshotError: null, counters: { moves: 0, resyncs: 1, resyncCorrections: 0, unresolved: 0 }, ...over };
+}
+
+const input = (over: Partial<FreshnessInput> = {}): FreshnessInput => ({ connection: "open", lastMessageAt: NOW, feed: feed(), board: board(), ...over });
+
 describe("describeFreshness", () => {
-  it("says nothing extra when live", () => {
-    expect(describeFreshness(status({}), "open", NOW, NOW, NOW)).toEqual({ tone: "live", label: "Live", detail: null, dim: false });
+  it("says nothing extra when live, even though the server itself can't reach the REST board", () => {
+    expect(describeFreshness(input(), NOW)).toEqual({ tone: "live", label: "Live", detail: null, dim: false });
+  });
+
+  it("explains a board that couldn't be loaded", () => {
+    const f = describeFreshness(input({ board: board({ hasData: false, lastSnapshotAt: null, snapshotError: "timed out after 8000ms" }) }), NOW);
+    expect(f).toMatchObject({ tone: "error", label: "Offline", dim: true });
+    expect(f.detail).toContain("timed out");
   });
 
   it("warns, then dims, when our own connection goes quiet", () => {
-    expect(describeFreshness(status({}), "reconnecting", NOW - 5_000, NOW, NOW)).toMatchObject({ tone: "warn", dim: false });
-    const lost = describeFreshness(status({}), "reconnecting", NOW - 30_000, NOW, NOW);
+    expect(describeFreshness(input({ connection: "reconnecting", lastMessageAt: NOW - 5_000 }), NOW)).toMatchObject({ tone: "warn", dim: false });
+    const lost = describeFreshness(input({ connection: "reconnecting", lastMessageAt: NOW - 30_000 }), NOW);
     expect(lost).toMatchObject({ tone: "error", label: "Reconnecting", dim: true });
     expect(lost.detail).toContain("30s ago");
   });
 
+  it("falls back to 'Delayed' while the push feed is down but checks are recent", () => {
+    const f = describeFreshness(input({ feed: feed({ health: "reconnecting", subscribed: false, ws: "closed" }), board: board({ lastSnapshotAt: NOW - 8_000 }) }), NOW);
+    expect(f).toMatchObject({ tone: "warn", label: "Delayed", dim: false });
+  });
+
   it("tells the viewer how old stale odds are, and why", () => {
     const f = describeFreshness(
-      status({ health: "stale", ws: "closed", subscribed: false, lastSnapshotAt: new Date(NOW - 4 * 60_000).toISOString(), snapshotError: "HTTP 503" }),
-      "open",
-      NOW,
-      NOW,
+      input({ feed: feed({ health: "down", subscribed: false, ws: "closed" }), board: board({ lastSnapshotAt: NOW - 4 * 60_000, snapshotError: "HTTP 503" }) }),
       NOW,
     );
     expect(f).toMatchObject({ tone: "error", label: "Stale", dim: true });
@@ -49,9 +62,8 @@ describe("describeFreshness", () => {
     expect(f.detail).toContain("HTTP 503");
   });
 
-  it("distinguishes a dropped push feed from failing REST checks", () => {
-    expect(describeFreshness(status({ health: "degraded", subscribed: false, ws: "closed" }), "open", NOW, NOW, NOW).label).toBe("Delayed");
-    expect(describeFreshness(status({ health: "degraded", snapshotError: "timed out" }), "open", NOW, NOW, NOW).detail).toContain("timed out");
+  it("stays live but warns when only the periodic check is failing", () => {
+    expect(describeFreshness(input({ board: board({ snapshotError: "timed out" }) }), NOW)).toMatchObject({ tone: "warn", label: "Live" });
   });
 });
 

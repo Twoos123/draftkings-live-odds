@@ -7,13 +7,12 @@ export const maxDuration = 300;
 const STREAM_LIFETIME_MS = (maxDuration - 20) * 1000;
 
 /**
- * Server-Sent Events: a `snapshot` of the board on connect, then `update`s as
- * DraftKings moves lines, and a `status` heartbeat every few seconds.
- * `?resync=1` (the Refresh button) forces a fresh REST check first.
+ * Server-Sent Events: DraftKings' push updates (`delta`), relayed as they
+ * arrive, plus a `status` heartbeat every few seconds. On connect, the last
+ * ~10s of deltas are replayed so a freshly loaded board can catch up.
  */
 export async function GET(req: Request) {
   const hub = getHub();
-  const resync = new URL(req.url).searchParams.has("resync");
   const encoder = new TextEncoder();
   let close = () => {};
 
@@ -25,7 +24,7 @@ export async function GET(req: Request) {
       };
       write(encoder.encode("retry: 1000\n\n"));
       // The hub hands every viewer the same pre-encoded frame.
-      const unsubscribe = hub.subscribe((_msg, frame) => write(frame), { resync });
+      const unsubscribe = hub.subscribe((_msg, frame) => write(frame));
       const lifetime = setTimeout(() => {
         write(encoder.encode("event: bye\ndata: {}\n\n"));
         close();
