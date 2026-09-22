@@ -109,6 +109,13 @@ describe("OddsHub (push-feed relay)", () => {
     expect(hub.status().serverBoard).toMatchObject({ snapshotError: null, moves: 1 });
   });
 
+  it("reports idle when no one is watching (nothing to connect for)", async () => {
+    const { hub, unsubscribe } = setup();
+    unsubscribe();
+    await vi.advanceTimersByTimeAsync(61_000);
+    expect(hub.status()).toMatchObject({ health: "idle", ws: "idle" });
+  });
+
   it("reports the push feed reconnecting, then down", async () => {
     const { feed, hub } = setup();
     feed.ack();

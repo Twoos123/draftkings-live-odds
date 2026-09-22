@@ -64,7 +64,7 @@ The brief says the *how* is the main thing being evaluated. Options considered:
 **Server-Sent Events** carry updates to the browser rather than a WebSocket: traffic only flows one way, SSE works as a normal streaming response from a Vercel Function, and `EventSource` reconnects on its own.
 
 **Running on Vercel (no always-on server).** Functions on the Hobby plan run for at most 300 s. So:
-- Each browser stream ends after ~280 s and reconnects immediately. The page keeps its board, then reloads it to cover the gap.
+- Each browser stream is recycled at ~280 s with a gapless handover: the next stream opens before the old one closes (see [Performance](#performance-where-the-milliseconds-go)).
 - With Fluid compute, concurrent requests share a warm instance. The hub lives in module scope, so **one DraftKings connection serves every viewer on that instance**.
 - The hub connects on the first viewer and disconnects 60 s after the last one leaves.
 - If Vercel paused the instance between requests (its 1 s timer stopped firing), the next viewer triggers a reconnect first.
@@ -238,7 +238,7 @@ git clone https://github.com/Twoos123/draftkings-live-odds.git
 cd draftkings-live-odds
 npm install
 npm run dev          # http://localhost:3000
-npm test             # 37 tests, using real captured DraftKings data
+npm test             # 38 tests, using real captured DraftKings data
 npm run typecheck
 npm run build        # production build
 npm run audit        # 15-min check that the push feed misses nothing (see above)
@@ -278,7 +278,7 @@ Grafana runs at http://localhost:3001. It opens read-only with no login; use adm
 | Route | What |
 |---|---|
 | `GET /api/stream` | SSE: `delta` (a DraftKings update, as-is, with DK's timing), `replay` (the last 10 s of deltas, on connect), `status` (every 5 s). |
-| `GET /api/health` | Push-feed status, latency percentiles, counters, and whether the server can reach the REST board itself. |
+| `GET /api/health` | Push-feed status for the instance that answers (`idle` if no one is viewing through it), latency percentiles, counters, and whether the server can reach the REST board itself. |
 | `GET /api/time` | Current time on DraftKings' clock, for the browser's clock correction. |
 | `GET /api/odds` | The server's own copy of the board as JSON. Returns 503 with the reason on Vercel, where DraftKings blocks the server from the REST board. |
 

@@ -159,7 +159,8 @@ export class OddsHub {
     const now = this.deps.now();
     const subscribed = this.feed?.subscribed ?? false;
     let health: FeedHealth;
-    if (subscribed) health = "live";
+    if (!this.feed) health = "idle";
+    else if (subscribed) health = "live";
     else if (this.downSince !== null && now - this.downSince > this.opts.downAfterMs) health = "down";
     else health = this.everSubscribed ? "reconnecting" : "starting";
     const iso = (t: number | null) => (t === null ? null : this.iso(t));

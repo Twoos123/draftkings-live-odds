@@ -49,7 +49,7 @@ export function describeFreshness({ connection, lastMessageAt, feed, board }: Fr
       : { tone: "neutral", label: "Connecting", detail: null, dim: false };
   }
 
-  if (!feed || feed.health === "starting") {
+  if (!feed || feed.health === "starting" || feed.health === "idle") {
     return { tone: "neutral", label: "Connecting", detail: "Connecting to DraftKings' live feed…", dim: false };
   }
 

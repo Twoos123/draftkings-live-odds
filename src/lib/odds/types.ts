@@ -73,8 +73,11 @@ export interface UpdateTiming {
   serverReceivedAt: string;
 }
 
-/** The server's connection to DraftKings' push feed. */
-export type FeedHealth = "starting" | "live" | "reconnecting" | "down";
+/**
+ * The server's connection to DraftKings' push feed. "idle": no viewers on this
+ * server instance, so it isn't connected (it connects on the first viewer).
+ */
+export type FeedHealth = "idle" | "starting" | "live" | "reconnecting" | "down";
 
 export interface LatencyStats {
   p50: number;
