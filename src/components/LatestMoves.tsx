@@ -40,18 +40,47 @@ function priceText(market: MarketType, p: Price, format: OddsFormat): string {
   return [line, formatOdds(p, format)].filter(Boolean).join(" ");
 }
 
-/** The last few line moves across the board; click one to jump to its game. */
-export function LatestMoves({ games, format, clockOffsetMs }: { games: Map<string, Game>; format: OddsFormat; clockOffsetMs: number }) {
+/**
+ * The last few line moves across the board; click one to jump to its game.
+ * Moves are tracked from when this page opened, so say so, and show that the
+ * feed is alive during quiet spells (most DK updates don't move a main line).
+ */
+export function LatestMoves({
+  games,
+  format,
+  clockOffsetMs,
+  openedAt,
+  lastFeedUpdateAt,
+}: {
+  games: Map<string, Game>;
+  format: OddsFormat;
+  clockOffsetMs: number;
+  /** Browser time the page started watching. */
+  openedAt: number;
+  /** When our server last heard from DraftKings (on DK's clock). */
+  lastFeedUpdateAt: string | null;
+}) {
   const moves = useMemo(() => collectMoves(games), [games]);
-  const now = useNow(15_000) + clockOffsetMs;
+  const browserNow = useNow(5_000);
+  const now = browserNow + clockOffsetMs;
+  const watchedMin = Math.floor((browserNow - openedAt) / 60_000);
+  const quiet =
+    watchedMin < 1 ? "No main lines have moved yet." : `No main lines have moved in the ${watchedMin} min you've been watching.`;
+  const heartbeat = lastFeedUpdateAt ? `DraftKings last sent an update ${formatAgo(now - Date.parse(lastFeedUpdateAt))}` : "Waiting for DraftKings' first update";
 
   return (
     <section aria-labelledby="latest-moves" className="mt-6 rounded-xl border border-border bg-surface px-4 py-3">
-      <h2 id="latest-moves" className="text-xs font-semibold uppercase tracking-[0.12em] text-muted">
-        Latest line moves
-      </h2>
+      <div className="flex items-baseline justify-between gap-3">
+        <h2 id="latest-moves" className="text-xs font-semibold uppercase tracking-[0.12em] text-muted">
+          Latest line moves
+        </h2>
+        <span className="text-xs text-muted">since you opened this page</span>
+      </div>
       {moves.length === 0 ? (
-        <p className="mt-2 text-sm text-muted">No lines have moved recently. When DraftKings changes a number, it shows up here and flashes in the table below.</p>
+        <p className="mt-2 text-sm text-muted">
+          {quiet} {heartbeat}; the feed is live, and a move will appear here the moment it happens. Lines move most around injury news,
+          weekends and game time.
+        </p>
       ) : (
         <ul className="mt-2 divide-y divide-border">
           {moves.map((m) => {

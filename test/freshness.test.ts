@@ -16,6 +16,7 @@ function feed(over: Partial<FeedStatus> = {}): FeedStatus {
     lastError: null,
     dkToServerMs: null,
     wireMs: null,
+    dkInternalMs: null,
     counters: { updates: 0, parseIssues: 0, reconnects: 0 },
     serverBoard: { lastSnapshotAt: null, snapshotError: "DraftKings snapshot returned HTTP 403 (blocked by Akamai)", moves: 0, resyncCorrections: 0 },
     sink: { enabled: false, lastError: null, written: 0 },

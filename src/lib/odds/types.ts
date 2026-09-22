@@ -100,6 +100,8 @@ export interface FeedStatus {
   dkToServerMs: LatencyStats | null;
   /** DK's websocket server sent it -> our server received it. */
   wireMs: LatencyStats | null;
+  /** DK created the change -> DK published it: time spent inside DraftKings, out of our hands. */
+  dkInternalMs: LatencyStats | null;
   counters: { updates: number; parseIssues: number; reconnects: number };
   /**
    * The server's own copy of the board, used for /api/odds and ClickHouse.

@@ -178,6 +178,9 @@ The other milliseconds worth chasing were outside the per-update path:
 - **Faster first odds.** The page tells the browser to preconnect to DraftKings' board host while it's still loading, so the first board request skips DNS + TCP + TLS (~100–200 ms).
 - **Faster cold starts.** The ClickHouse client is only loaded when ClickHouse is configured, so the live site doesn't load it on every cold function start.
 - **Shorter worst case.** If DraftKings' push feed drops, the browser re-checks the board every 5 s (was 10 s) until it's back.
+- **Honest attribution.** The latency badge shows the total *and* "our part" (DraftKings' socket → our server → you, typically ~50 ms). Feed details separates out time spent inside DraftKings before it publishes a change. That's usually ~20 ms, but we've watched it sit at ~3 s for minutes at a time, which would otherwise look like our lag.
+
+**Deliberately not done: racing the REST board against the push feed.** In both audits, DraftKings' REST board sometimes showed a change 2–3 s before DraftKings published it to the push feed (2 of 13 moves in one audit, 1 of 1 in another). Polling REST every couple of seconds from every open page would catch those cases sooner. But it would multiply our requests to DraftKings by 20–30×, per viewer, to shave seconds off a minority of moves. Push-first with a 60 s check is the reasonable trade; the knob is `RECHECK_LIVE_MS` in `src/hooks/useOddsStream.ts` if Betstamp wanted to make it differently.
 
 ## Getting the data: what we found
 

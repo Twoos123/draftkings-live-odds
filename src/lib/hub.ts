@@ -88,6 +88,7 @@ export class OddsHub {
   private dkClockOffsetMs = 0;
   private readonly dkToServer = new RollingWindow();
   private readonly wire = new RollingWindow();
+  private readonly dkInternal = new RollingWindow();
   private readonly counters: FeedStatus["counters"] = { updates: 0, parseIssues: 0, reconnects: 0 };
   private readonly opts: HubOptions;
 
@@ -175,6 +176,7 @@ export class OddsHub {
       lastError: this.lastError,
       dkToServerMs: this.dkToServer.stats(),
       wireMs: this.wire.stats(),
+      dkInternalMs: this.dkInternal.stats(),
       counters: { ...this.counters },
       serverBoard: {
         lastSnapshotAt: iso(this.engine.lastSnapshotAt),
@@ -203,6 +205,8 @@ export class OddsHub {
     }
     const receivedOnDkClock = this.dkTime(receivedAt);
     if (meta.createdTime) this.dkToServer.push(receivedOnDkClock - Date.parse(meta.createdTime));
+    // Both timestamps are DraftKings', so this needs no clock correction.
+    if (meta.createdTime && meta.publishedTime) this.dkInternal.push(Date.parse(meta.publishedTime) - Date.parse(meta.createdTime));
     this.deps.sink.recordLatency(meta, receivedOnDkClock, this.deps.instanceId);
 
     const msg: StreamMessage = {

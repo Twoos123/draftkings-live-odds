@@ -141,6 +141,10 @@ describe("OddsHub (push-feed relay)", () => {
     feed.h.onUpdate(priceChange(250), { createdTime: new Date(dkNow - 80).toISOString(), publishedTime: null, wsPublishedTime: new Date(dkNow - 30).toISOString() }, Date.now());
     expect(hub.status().dkToServerMs?.p50).toBe(80);
     expect(hub.status().wireMs?.p50).toBe(30);
+
+    // Time inside DraftKings uses only DK's own timestamps, so it needs no clock correction.
+    feed.h.onUpdate(priceChange(255), { createdTime: new Date(dkNow - 3_000).toISOString(), publishedTime: new Date(dkNow - 40).toISOString(), wsPublishedTime: null }, Date.now());
+    expect(hub.status().dkInternalMs?.p50).toBe(2_960);
     expect(Date.parse(last("delta").sentAt)).toBe(dkNow);
     expect(hub.now() - Date.now()).toBe(400);
   });

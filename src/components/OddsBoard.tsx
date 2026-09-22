@@ -66,10 +66,13 @@ function LatencyBadge({ latency, feed }: { latency: ClientLatency; feed: FeedSta
   // Until the browser has timed enough updates itself, DK → server + server → you is the estimate.
   const total = e2e ? e2e.p50 : server ? server.p50 + (hop?.p50 ?? 0) : null;
   if (total === null || total < 0) return null;
+  // Our share: DK's socket -> our server -> you. The rest is DraftKings holding the change before publishing it.
+  const ours = feed?.wireMs && hop ? feed.wireMs.p50 + hop.p50 : null;
   const title = [
-    latency.endToEnd && `DraftKings → your screen: ${latency.endToEnd.p50} ms median over ${latency.endToEnd.n} moves`,
-    dk && `DraftKings → our server: ${dk.p50} ms median (${dk.n} updates)`,
-    hop && `Our server → you: ${hop.p50} ms median`,
+    latency.endToEnd && `DraftKings → your screen: ${latency.endToEnd.p50} ms median over ${latency.endToEnd.n} updates`,
+    feed?.dkInternalMs && `  inside DraftKings before they publish it: ${feed.dkInternalMs.p50} ms median`,
+    feed?.wireMs && `  DraftKings → our server: ${feed.wireMs.p50} ms median`,
+    hop && `  our server → you: ${hop.p50} ms median`,
   ]
     .filter(Boolean)
     .join("\n");
@@ -79,6 +82,7 @@ function LatencyBadge({ latency, feed }: { latency: ClientLatency; feed: FeedSta
         <path d="M9.5 1 3 9h4.5L6.5 15 13 7H8.5l1-6Z" />
       </svg>
       ≈{seconds(total)} behind<span className="hidden sm:inline"> DraftKings</span>
+      {ours !== null && ours < total && <span className="hidden sm:inline"> · our part {seconds(ours)}</span>}
     </span>
   );
 }
@@ -116,6 +120,7 @@ export function OddsBoard() {
   const { games, feed, board, connection, lastMessageAt, latency, refresh, refreshing, clockOffsetMs } = useOddsStream();
   const [format, setFormat] = useOddsFormat();
   const [query, setQuery] = useState("");
+  const [openedAt] = useState(() => Date.now());
   const now = useNow();
   const serverNow = now + clockOffsetMs;
   const today = new Date(now);
@@ -188,7 +193,9 @@ export function OddsBoard() {
         )}
       </div>
 
-      {games.size > 0 && <LatestMoves games={games} format={format} clockOffsetMs={clockOffsetMs} />}
+      {games.size > 0 && (
+        <LatestMoves games={games} format={format} clockOffsetMs={clockOffsetMs} openedAt={openedAt} lastFeedUpdateAt={feed?.lastMessageAt ?? null} />
+      )}
       <HowToRead />
 
       <div className={`transition-opacity ${fresh.dim ? "opacity-50 grayscale" : ""}`}>

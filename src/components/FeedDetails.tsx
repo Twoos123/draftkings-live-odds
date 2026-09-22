@@ -33,6 +33,7 @@ export function FeedDetails({
       ["DraftKings live feed (our server)", `${feed.ws}${feed.subscribed ? ", subscribed" : ""} · ${feed.health}`],
       ["  last update from DraftKings", agoServer(feed.lastMessageAt)],
       ["DraftKings → our server", ms(feed.dkToServerMs)],
+      ["  of which inside DraftKings (before publishing)", ms(feed.dkInternalMs)],
       ["  of which on the wire", ms(feed.wireMs)],
       ["Our server → your browser", ms(latency.serverToBrowser)],
       ["DraftKings → your screen", ms(latency.endToEnd)],
