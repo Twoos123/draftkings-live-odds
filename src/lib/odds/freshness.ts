@@ -64,13 +64,13 @@ export function describeFreshness({ connection, lastMessageAt, feed, board }: Fr
       : { tone: "live", label: "Live", detail: null, dim: false };
   }
 
-  // Push feed reconnecting or down: the browser falls back to re-checking DraftKings every 10s.
+  // Push feed reconnecting or down: the browser falls back to re-checking DraftKings every 5s.
   const checkedAgo = board.lastSnapshotAt === null ? Infinity : now - board.lastSnapshotAt;
   if (!board.snapshotError && checkedAgo <= 30_000) {
     return {
       tone: "warn",
       label: "Delayed",
-      detail: `DraftKings' live feed dropped. Re-checking every 10 seconds until it's back (last check ${formatAgo(checkedAgo)}).`,
+      detail: `DraftKings' live feed dropped. Re-checking every 5 seconds until it's back (last check ${formatAgo(checkedAgo)}).`,
       dim: false,
     };
   }

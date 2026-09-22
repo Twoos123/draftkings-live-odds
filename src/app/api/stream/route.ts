@@ -1,10 +1,16 @@
 import { getHub } from "@/lib/server";
 
-// Vercel Hobby caps a function at 300s. Each browser stream ends a little
-// before that and the browser's EventSource reconnects on its own; with Fluid
-// compute the reconnect usually lands on the same warm instance and hub.
+// Vercel Hobby caps a function at 300s, so each browser stream is recycled
+// before that. With Fluid compute the new stream usually lands on the same
+// warm instance and hub.
 export const maxDuration = 300;
-const STREAM_LIFETIME_MS = (maxDuration - 20) * 1000;
+/** Override only to watch rotation locally without waiting ~5 minutes. */
+const STREAM_LIFETIME_MS = Number(process.env.STREAM_LIFETIME_MS) || (maxDuration - 20) * 1000;
+/**
+ * Warn the browser this long before closing, so it opens the next stream
+ * first and switches over with no gap (instead of a reconnect blind spot).
+ */
+const ROTATE_NOTICE_MS = 10_000;
 
 /**
  * Server-Sent Events: DraftKings' push updates (`delta`), relayed as they
@@ -22,16 +28,16 @@ export async function GET(req: Request) {
       const write = (bytes: Uint8Array) => {
         if (!closed) controller.enqueue(bytes);
       };
-      write(encoder.encode("retry: 1000\n\n"));
+      // Unplanned drops: have EventSource retry quickly.
+      write(encoder.encode("retry: 250\n\n"));
       // The hub hands every viewer the same pre-encoded frame.
       const unsubscribe = hub.subscribe((_msg, frame) => write(frame));
-      const lifetime = setTimeout(() => {
-        write(encoder.encode("event: bye\ndata: {}\n\n"));
-        close();
-      }, STREAM_LIFETIME_MS);
+      const rotate = setTimeout(() => write(encoder.encode("event: rotate\ndata: {}\n\n")), STREAM_LIFETIME_MS - ROTATE_NOTICE_MS);
+      const lifetime = setTimeout(() => close(), STREAM_LIFETIME_MS);
       close = () => {
         if (closed) return;
         closed = true;
+        clearTimeout(rotate);
         clearTimeout(lifetime);
         unsubscribe();
         try {

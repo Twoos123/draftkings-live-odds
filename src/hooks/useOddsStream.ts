@@ -22,7 +22,7 @@ const HIDDEN_CLOSE_MS = 60_000;
 /** Full re-check of the board with DraftKings while the push feed is up… */
 const RECHECK_LIVE_MS = 60_000;
 /** …and while it's down, so the board keeps moving without it. */
-const RECHECK_FALLBACK_MS = 10_000;
+const RECHECK_FALLBACK_MS = 5_000;
 
 const EMPTY_BOARD: BoardStatus = {
   hasData: false,
@@ -71,6 +71,8 @@ export function useOddsStream() {
 
   useEffect(() => {
     let es: EventSource | null = null;
+    /** The outgoing stream during a handover, until the new one delivers. */
+    let handoverFrom: EventSource | null = null;
     let opened = false;
     let retries = 0;
     let retryTimer: ReturnType<typeof setTimeout> | undefined;
@@ -129,27 +131,47 @@ export function useOddsStream() {
       return msg;
     };
 
-    function connect() {
+    /**
+     * Open the stream. `handover`: the server is about to recycle the current
+     * stream (Vercel's time limit), so open the next one first and keep the old
+     * one until the new one delivers. No gap, so no reload needed.
+     */
+    function connect(handover = false) {
       clearTimeout(retryTimer);
-      es?.close();
+      handoverFrom?.close();
+      handoverFrom = null;
+      if (handover && es) handoverFrom = es;
+      else es?.close();
       const source = new EventSource("/api/stream");
       es = source;
       lastMessage = Date.now();
+      let opens = 0;
+
+      const delivered = () => {
+        if (handoverFrom && es === source) {
+          handoverFrom.close();
+          handoverFrom = null;
+        }
+      };
 
       source.onopen = () => {
-        // Any gap in the stream may have dropped updates: reload the board after a reconnect.
-        if (opened) void loadBoard();
+        opens++;
+        // After an unplanned reconnect, updates may have been missed: reload the board.
+        if (opened && (opens > 1 || !handover)) void loadBoard();
         opened = true;
       };
 
       source.addEventListener("status", (e) => {
+        delivered();
         const msg = JSON.parse((e as MessageEvent<string>).data) as Extract<StreamMessage, { type: "status" }>;
         feedStatus = msg.status;
         setFeed(msg.status);
         received(msg.sentAt);
       });
 
+      // Deltas can arrive on both streams during a handover; applying one twice is harmless.
       source.addEventListener("delta", (e) => {
+        delivered();
         const msg = applyDelta((e as MessageEvent<string>).data);
         received(msg.sentAt, msg.timing.dkCreatedAt);
         publishBoard();
@@ -158,6 +180,10 @@ export function useOddsStream() {
       // Catch-up deltas from the last ~10s: applied, but not timed.
       source.addEventListener("replay", (e) => {
         applyDelta((e as MessageEvent<string>).data);
+      });
+
+      source.addEventListener("rotate", () => {
+        if (es === source) connect(true);
       });
 
       source.onerror = () => {
@@ -198,6 +224,8 @@ export function useOddsStream() {
     const onVisibility = () => {
       if (document.hidden) {
         hiddenTimer = setTimeout(() => {
+          handoverFrom?.close();
+          handoverFrom = null;
           es?.close();
           es = null;
         }, HIDDEN_CLOSE_MS);
@@ -222,6 +250,7 @@ export function useOddsStream() {
       clearTimeout(hiddenTimer);
       clearTimeout(retryTimer);
       document.removeEventListener("visibilitychange", onVisibility);
+      handoverFrom?.close();
       es?.close();
       es = null;
     };

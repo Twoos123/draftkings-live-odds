@@ -45,7 +45,12 @@ export function FeedDetails({
             ? `checked ${agoServer(feed.serverBoard.lastSnapshotAt)} · ${feed.serverBoard.resyncCorrections} corrections`
             : "—",
       ],
-      ["ClickHouse", feed.sink.enabled ? `${feed.sink.written} rows written${feed.sink.lastError ? ` · error: ${feed.sink.lastError}` : ""}` : "not configured"],
+      [
+        "ClickHouse",
+        feed.sink.enabled
+          ? `${feed.sink.written} rows written${feed.sink.lastError ? ` · error: ${feed.sink.lastError}` : ""}`
+          : "off on this deployment (optional local analytics, see README)",
+      ],
       ["Server instance · clock offset to DraftKings", `${feed.instanceId} · ${feed.dkClockOffsetMs} ms`],
     );
     if (feed.lastError) rows.push(["Last feed error", feed.lastError]);

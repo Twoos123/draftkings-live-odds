@@ -1,4 +1,4 @@
-import { createClient, type ClickHouseClient } from "@clickhouse/client";
+import type { ClickHouseClient } from "@clickhouse/client";
 import type { DkUpdateMeta } from "./dk/schema";
 import type { Game, Move } from "./odds/types";
 
@@ -65,8 +65,9 @@ class ClickHouseSink implements TickSink {
   private lastError: string | null = null;
   private written = 0;
   private timer: ReturnType<typeof setInterval>;
+  private client: Promise<ClickHouseClient> | null = null;
 
-  constructor(private readonly client: ClickHouseClient) {
+  constructor(private readonly connect: () => Promise<ClickHouseClient>) {
     this.timer = setInterval(() => void this.flush(), 2000);
     this.timer.unref?.();
   }
@@ -140,13 +141,15 @@ class ClickHouseSink implements TickSink {
     const ticks = this.ticks.splice(0);
     const latency = this.latency.splice(0);
     try {
-      this.ready ??= this.migrate();
+      const client = await (this.client ??= this.connect());
+      this.ready ??= this.migrate(client);
       await this.ready;
-      if (ticks.length) await this.client.insert({ table: "odds_ticks", values: ticks, format: "JSONEachRow" });
-      if (latency.length) await this.client.insert({ table: "feed_latency", values: latency, format: "JSONEachRow" });
+      if (ticks.length) await client.insert({ table: "odds_ticks", values: ticks, format: "JSONEachRow" });
+      if (latency.length) await client.insert({ table: "feed_latency", values: latency, format: "JSONEachRow" });
       this.written += ticks.length + latency.length;
       this.lastError = null;
     } catch (err) {
+      this.client = null;
       this.ready = null;
       this.lastError = err instanceof Error ? err.message : String(err);
       // Put the rows back for the next attempt; cap() bounds memory.
@@ -158,21 +161,27 @@ class ClickHouseSink implements TickSink {
     }
   }
 
-  private async migrate() {
-    for (const sql of SCHEMA) await this.client.command({ query: sql });
+  private async migrate(client: ClickHouseClient) {
+    for (const sql of SCHEMA) await client.command({ query: sql });
   }
 }
 
+/**
+ * Off unless CLICKHOUSE_URL is set. The client library is only loaded when it
+ * is, so deployments without ClickHouse (like the live site) don't pay for it
+ * on every cold start.
+ */
 export function createSinkFromEnv(): TickSink {
   const url = process.env.CLICKHOUSE_URL;
   if (!url) return noopSink;
-  return new ClickHouseSink(
-    createClient({
+  return new ClickHouseSink(async () => {
+    const { createClient } = await import("@clickhouse/client");
+    return createClient({
       url,
       username: process.env.CLICKHOUSE_USER ?? "default",
       password: process.env.CLICKHOUSE_PASSWORD ?? "",
       database: process.env.CLICKHOUSE_DATABASE ?? "default",
       request_timeout: 10_000,
-    }),
-  );
+    });
+  });
 }

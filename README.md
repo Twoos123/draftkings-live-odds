@@ -3,10 +3,23 @@
 Live NFL moneyline, spread and total odds from DraftKings, on a page that updates itself as lines move.
 
 - **Live:** https://draftkings-live-odds.vercel.app
-- **Freshness:** a line move usually reaches our server **about 0.17 s after DraftKings creates it** (median, NFL), and your screen a few tens of ms later. Occasionally DraftKings itself holds a change for 1–2 s before publishing it; that's the p95 of ~1.6 s. [Details](#how-fresh-are-the-odds).
+- **Freshness:** on the live site, a line move reaches your screen **about 0.25 s after DraftKings creates it** (median). Occasionally DraftKings itself holds a change for 1–2 s before publishing it, which is the long tail. [Details](#how-fresh-are-the-odds).
 - **Nothing missed:** in a 20-minute audit, the push feed delivered all 26 NFL price changes DraftKings made (0 missed). [How that was checked](#does-the-live-feed-miss-anything).
 
 ![Screenshot](docs/screenshot.png)
+
+## Quick start
+
+Requires Node 20+ and git.
+
+```bash
+git clone https://github.com/Twoos123/draftkings-live-odds.git
+cd draftkings-live-odds
+npm install
+npm run dev
+```
+
+Then open http://localhost:3000. No accounts, keys or configuration are needed. More in [Running locally](#running-locally) and [Deploying](#deploying).
 
 ## How it works
 
@@ -44,7 +57,7 @@ The brief says the *how* is the main thing being evaluated. Options considered:
 | Option | Latency | Verdict |
 |---|---|---|
 | Scrape the rendered page with a headless browser | seconds | Rejected. Heavy, slow, fragile, and DraftKings' bot protection blocks headless browsers outright (we tried). |
-| Poll the REST board | = poll interval | Too slow alone, and polling every second would mean ~86k requests a day. **Used as the fallback** (every 10 s) while the push feed is down, and as the 60 s integrity check. |
+| Poll the REST board | = poll interval | Too slow alone, and polling every second would mean ~86k requests a day. **Used as the fallback** (every 5 s) while the push feed is down, and as the 60 s integrity check. |
 | **Subscribe to DraftKings' push feed** | **~60 ms after DK publishes** | **Chosen.** It's what DraftKings' own site does: only what changed, the moment it changes, one connection, no login or token. |
 | Browser connects to DraftKings' socket directly | lowest | Rejected. Every viewer becomes a DraftKings connection, there's no single place to measure latency or record history, and the protocol would sit in the client. |
 
@@ -60,7 +73,7 @@ The brief says the *how* is the main thing being evaluated. Options considered:
 
 **No login, cookie or token is needed anywhere.**
 - The push feed accepts anonymous subscriptions. DraftKings' own client sends `jwt: "default-token"`, and the server doesn't require even that.
-- **Nothing can expire.** If DraftKings ever starts requiring a token, the subscription won't be acknowledged within 10 s. The page then reports the feed down and falls back to 10 s REST checks.
+- **Nothing can expire.** If DraftKings ever starts requiring a token, the subscription won't be acknowledged within 10 s. The page then reports the feed down and falls back to 5 s REST checks.
 
 **Bot protection (Akamai) came up three ways:**
 1. **TLS fingerprinting.** The REST endpoint returns `403 Access Denied` to `curl` and Python's default HTTP client, even with a browser User-Agent. The same request with a browser-like TLS handshake succeeded, so the block is on the TLS fingerprint, not headers or cookies. Node's built-in `fetch` is accepted as-is from a home connection. A headless browser was blocked too: it announces itself as `HeadlessChrome`.
@@ -86,7 +99,8 @@ On a host whose IP DraftKings' REST endpoint accepts (e.g. running locally), the
 
 **Rate limits:** none hit. The footprint is:
 - one WebSocket per active server instance;
-- one REST request per minute per open page (every 10 s while the push feed is down, with backoff).
+- one REST request per minute per open page (every 5 s while the push feed is down, with backoff);
+- no requests at all from a tab that's been in the background for a minute.
 
 ## How fresh are the odds
 
@@ -97,26 +111,29 @@ Every push message carries DraftKings' own timestamps (`createdTime`, `published
 2. A message can't arrive before DK sent it, so any negative wire time nudges the offset up.
 3. Every timestamp the server emits is on DK's clock, and `/api/time` serves DK-aligned time so the browser lines up too.
 
-This makes the numbers right on any host. On Vercel the measured offset is −2 ms.
+This makes the numbers right on any host. On Vercel the measured offset is −2 to −3 ms.
 
-Measured with that correction over 35 NFL push updates (Toronto, recorded in ClickHouse):
+**On the live site** (Vercel `iad1`, viewed from Toronto, from the page's **Feed details**; 19 NFL push updates):
 
 | Stage | Median | p95 |
 |---|---|---|
-| DraftKings creates the change → DraftKings publishes it | 20 ms | 1.4 s |
-| DraftKings' socket server → our server (network) | 29 ms | 40 ms |
-| DraftKings publishes → our server has it | 58 ms | — |
-| **DraftKings creates the change → our server has it** | **174 ms** | **1.6 s** |
-| Our server → your browser | tens of ms | — |
+| DraftKings' socket server → our server (network) | **7 ms** | 17 ms |
+| **DraftKings creates the change → our server has it** | **214 ms** | 2.5 s |
+| Our server → your browser | 38 ms | 49 ms |
+| **DraftKings creates the change → on your screen** | **248 ms** | 2.6 s |
 
-So **the number on screen is typically about 0.2 s behind DraftKings' trading system.** The long tail is inside DraftKings: now and then they hold a change for 1–2 s before pushing it. A 30-minute recording dominated by live MLB games had a slower internal median of ~0.4 s. None of that can be reduced from outside. The page shows live numbers under **Feed details**, `/api/health` has the server-side percentiles, and Grafana charts them.
+The same board saw 18 line moves in that window, with **0 corrections** needed by the 60 s re-check.
+
+Locally (Toronto, 35 NFL updates, recorded in ClickHouse), DraftKings' own created → published step had a median of 20 ms and a p95 of 1.4 s.
+
+So **the number on screen is typically about a quarter of a second behind DraftKings' trading system.** Almost all of the long tail is inside DraftKings: now and then they hold a change for 1–2 s before pushing it. A 30-minute recording dominated by live MLB games had a slower internal median of ~0.4 s. None of that can be reduced from outside. The page shows live numbers under **Feed details**, `/api/health` has the server-side percentiles, and Grafana charts them.
 
 When things go wrong, the page says how old the numbers are instead of pretending:
 
 | Situation | Freshness | What the page shows |
 |---|---|---|
 | Normal | ~0.2 s | **Live** |
-| Push feed dropped | ≤ 10 s (the browser re-checks DraftKings every 10 s) | **Delayed** + explanation |
+| Push feed dropped | ≤ 5 s (the browser re-checks DraftKings every 5 s) | **Delayed** + explanation |
 | Push feed up, board re-checks failing | live (deltas still flowing) | **Live** + warning |
 | Push feed down and re-checks failing | frozen | **Stale**: "last confirmed 4m ago", greyed out, error reason |
 | Board can't load at all | none | **Offline** + reason, retrying |
@@ -141,12 +158,12 @@ The page runs the same check continuously (resync corrections under **Feed detai
 | Stage | Median | Ours to change? |
 |---|---|---|
 | Inside DraftKings (created → published) | 20 ms (p95 1.4 s) | No |
-| DraftKings → Akamai edge → our server | ~30 ms | Barely. The feed is proxied by Akamai's edge, so moving our server only changes the last short hop. |
+| DraftKings → Akamai edge → our server | 7 ms on Vercel `iad1` | Already next door to DraftKings' edge |
 | **Server:** raw frame → parse → validate → encode SSE (+ its own board) | **27 µs** (p99 83 µs) | Yes. See below. |
-| Our server → browser | tens of ms | Only by removing the hop |
+| Our server → browser | 38 ms from Toronto | Only by removing the hop |
 | **Browser:** delta → rebuild one game → diff → decorate | **12 µs** (p99 31 µs) | Yes |
 
-Our code is about 0.02% of the total, so **rewriting it in Go, moving to Python, or adding multiprocessing wouldn't make the page any fresher**:
+Our code is about 0.01% of the total, so **rewriting it in Go, moving to Python, or adding multiprocessing wouldn't make the page any fresher**:
 - **Go** might save ~20 µs.
 - **Python** would be slower.
 - **Multiprocessing** would add inter-process hops that cost more than the work itself. There's one socket delivering about one message a second, so there's nothing to parallelize.
@@ -155,6 +172,12 @@ What mattered was keeping per-update work proportional to *what changed*, not to
 - **Only the touched game is rebuilt.** The store keeps parent → child indexes (event → markets → selections), so an update rebuilds and diffs one game, not all 32. That took per-update cost from 335 µs to ~26 µs, flat as leagues are added.
 - **Each SSE frame is serialized once** for all viewers. Relaying raw deltas also shrank the average message from 1.6 KB to 465 bytes.
 - **In the browser**, unchanged games keep their object identity and each game card is memoized, so an update re-renders one card, not 192 price cells. Only cells that recently moved run a timer, and only at the two moments that matter: the flash ends, and the old price drops.
+
+The other milliseconds worth chasing were outside the per-update path:
+- **No reconnect blind spot.** Vercel ends each stream at ~280 s. The server sends `rotate` 10 s before closing; the browser opens the next stream while the old one is still delivering, and drops the old one once the new one speaks. Previously every viewer had a ~1–1.5 s gap every ~4.7 minutes, when moves arrived late via replay. Unplanned drops now retry after 250 ms instead of 1 s.
+- **Faster first odds.** The page tells the browser to preconnect to DraftKings' board host while it's still loading, so the first board request skips DNS + TCP + TLS (~100–200 ms).
+- **Faster cold starts.** The ClickHouse client is only loaded when ClickHouse is configured, so the live site doesn't load it on every cold function start.
+- **Shorter worst case.** If DraftKings' push feed drops, the browser re-checks the board every 5 s (was 10 s) until it's back.
 
 ## Getting the data: what we found
 
@@ -200,7 +223,8 @@ This is mapped to a clean shape (`src/lib/odds/types.ts`): **game → market (mo
 - **Snapshot/delta race:** updates from the 10 s before a board load, and during it, are replayed onto it in order.
 - **Unknown references** trigger a re-check, at most once per 10 s.
 - **Browser stream:**
-  - `EventSource` auto-reconnects, and the board is reloaded after any reconnect, since updates may have been missed.
+  - Planned recycling (Vercel's time limit) is a gapless handover: `rotate` → open the next stream → close the old one.
+  - Unplanned drops: `EventSource` reconnects after 250 ms, and the board is reloaded since updates may have been missed.
   - A watchdog reconnects after 15 s without a heartbeat (status events arrive every 5 s).
   - The stream closes after a minute in a background tab and reopens (and reloads) on return.
 - **ClickHouse** is optional and isolated: batched every 2 s, failures keep the rows (capped) and retry, and it never blocks the odds.
@@ -210,18 +234,23 @@ This is mapped to a clean shape (`src/lib/odds/types.ts`): **game → market (mo
 Requires Node 20+.
 
 ```bash
+git clone https://github.com/Twoos123/draftkings-live-odds.git
+cd draftkings-live-odds
 npm install
 npm run dev          # http://localhost:3000
 npm test             # 37 tests, using real captured DraftKings data
 npm run typecheck
+npm run build        # production build
 npm run audit        # 15-min check that the push feed misses nothing (see above)
 ```
 
-No configuration is needed; see `.env.example` for the optional settings.
+No configuration is needed; see `.env.example` for the optional settings. Locally the server can also reach DraftKings' REST board, so `/api/odds` works too; on Vercel it returns 503 by design (see above).
 
 To see the move highlight without waiting for DraftKings, run `curl -X POST localhost:3000/api/dev/simulate` (development only; 404 in production). It sends a fake moneyline change through the relay, like a real update. The page's next 60 s check puts the real price back and counts a resync correction, which is the self-healing working.
 
 ### ClickHouse + Grafana (optional)
+
+This is local analytics built around Betstamp's stack. The live site doesn't use it: the brief doesn't require it, a hosted ClickHouse isn't free, and on Vercel the server can only record latency, not prices (see `odds_ticks` below). Needs Docker.
 
 ```bash
 docker compose up -d
@@ -255,7 +284,23 @@ Grafana runs at http://localhost:3001. It opens read-only with no login; use adm
 
 ## Deploying
 
-Import the repo in Vercel; no settings are needed. Functions run in `iad1` (Washington, D.C.) by default, close to DraftKings' New Jersey servers. ClickHouse is off unless `CLICKHOUSE_URL` is set.
+No settings or environment variables are needed. Either:
+
+- **Dashboard:** at https://vercel.com/new, import the GitHub repo and click **Deploy**.
+- **CLI:**
+  ```bash
+  npx vercel login              # once, opens the browser
+  npx vercel link --yes         # once, creates/links the Vercel project
+  npx vercel deploy --prod      # build and deploy to production
+  npx vercel git connect        # optional: auto-deploy on every push to main
+  ```
+
+Functions run in `iad1` (Washington, D.C.) by default: 7 ms from DraftKings' socket edge. ClickHouse stays off unless `CLICKHOUSE_URL` is set. `.vercelignore` keeps local `.env*` files out of CLI uploads.
+
+After deploying, open the site and check **Feed details**:
+- the board says "last checked … ago";
+- the live feed says "open, subscribed · live";
+- "Server's own copy of the board" says it's unavailable (403). That last one is expected on Vercel.
 
 ## Project layout
 

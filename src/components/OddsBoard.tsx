@@ -6,7 +6,7 @@ import { useOddsFormat } from "@/hooks/useOddsFormat";
 import { useOddsStream, type ClientLatency } from "@/hooks/useOddsStream";
 import type { OddsFormat } from "@/lib/odds/format";
 import { describeFreshness, formatAgo, type Freshness, type Tone } from "@/lib/odds/freshness";
-import type { BoardStatus, FeedStatus, Game } from "@/lib/odds/types";
+import type { BoardStatus, FeedStatus, Game, LatencyStats } from "@/lib/odds/types";
 import { FeedDetails } from "./FeedDetails";
 import { GameCard, GRID } from "./GameCard";
 import { HowToRead } from "./HowToRead";
@@ -49,6 +49,8 @@ function matches(g: Game, query: string) {
   return [g.away.name, g.away.short, g.home.name, g.home.short].some((s) => s.toLowerCase().includes(q));
 }
 
+const MIN_SAMPLES = 3;
+
 function seconds(ms: number) {
   return ms < 1000 ? `${Math.round(ms)} ms` : `${(ms / 1000).toFixed(1)} s`;
 }
@@ -57,8 +59,12 @@ function seconds(ms: number) {
 function LatencyBadge({ latency, feed }: { latency: ClientLatency; feed: FeedStatus | null }) {
   const dk = feed?.dkToServerMs;
   const hop = latency.serverToBrowser;
-  // Until the browser has timed its own hop, the server's DK → server figure is the best estimate.
-  const total = latency.endToEnd?.p50 ?? (dk ? dk.p50 + (hop?.p50 ?? 0) : null);
+  // A median of one or two updates is noise (DraftKings sometimes holds a change for seconds).
+  const enough = (s: LatencyStats | null | undefined) => (s && s.n >= MIN_SAMPLES ? s : null);
+  const e2e = enough(latency.endToEnd);
+  const server = enough(dk);
+  // Until the browser has timed enough updates itself, DK → server + server → you is the estimate.
+  const total = e2e ? e2e.p50 : server ? server.p50 + (hop?.p50 ?? 0) : null;
   if (total === null || total < 0) return null;
   const title = [
     latency.endToEnd && `DraftKings → your screen: ${latency.endToEnd.p50} ms median over ${latency.endToEnd.n} moves`,
