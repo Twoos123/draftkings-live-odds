@@ -94,6 +94,8 @@ export interface FeedStatus {
   instanceId: string;
   ws: "idle" | "connecting" | "open" | "closed";
   subscribed: boolean;
+  /** When the current push-feed subscription was acknowledged. */
+  subscribedAt: string | null;
   lastMessageAt: string | null;
   lastError: string | null;
   /** DK created the change -> our server received it. */

@@ -77,6 +77,7 @@ export class OddsHub {
   private lastStatusAt = 0;
   private lastMessageAt: number | null = null;
   private everSubscribed = false;
+  private subscribedAt: number | null = null;
   /** When the push feed last stopped being subscribed (or first started connecting). */
   private downSince: number | null = null;
   private lastError: string | null = null;
@@ -172,6 +173,7 @@ export class OddsHub {
       instanceId: this.deps.instanceId,
       ws: this.feed?.state ?? "idle",
       subscribed,
+      subscribedAt: subscribed ? iso(this.subscribedAt) : null,
       lastMessageAt: iso(this.lastMessageAt),
       lastError: this.lastError,
       dkToServerMs: this.dkToServer.stats(),
@@ -236,6 +238,7 @@ export class OddsHub {
         // NTP-style: DK answered roughly halfway through the round trip.
         if (clock) this.dkClockOffsetMs = Math.round(clock.dkTime - (clock.sentAt + clock.receivedAt) / 2);
         this.everSubscribed = true;
+        this.subscribedAt = this.deps.now();
         this.downSince = null;
         this.broadcastStatus();
         void this.engine.resync();

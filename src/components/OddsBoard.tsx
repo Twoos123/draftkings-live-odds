@@ -194,7 +194,10 @@ export function OddsBoard() {
       </div>
 
       {games.size > 0 && (
-        <LatestMoves games={games} format={format} clockOffsetMs={clockOffsetMs} openedAt={openedAt} lastFeedUpdateAt={feed?.lastMessageAt ?? null} />
+        <LatestMoves games={games} format={format} clockOffsetMs={clockOffsetMs} openedAt={openedAt}
+          lastFeedUpdateAt={feed?.lastMessageAt ?? null}
+          feedSubscribedAt={feed?.subscribedAt ?? null}
+        />
       )}
       <HowToRead />
 

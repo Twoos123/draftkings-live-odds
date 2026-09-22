@@ -51,6 +51,7 @@ export function LatestMoves({
   clockOffsetMs,
   openedAt,
   lastFeedUpdateAt,
+  feedSubscribedAt,
 }: {
   games: Map<string, Game>;
   format: OddsFormat;
@@ -59,6 +60,8 @@ export function LatestMoves({
   openedAt: number;
   /** When our server last heard from DraftKings (on DK's clock). */
   lastFeedUpdateAt: string | null;
+  /** When our server's DraftKings subscription started (on DK's clock). */
+  feedSubscribedAt: string | null;
 }) {
   const moves = useMemo(() => collectMoves(games), [games]);
   const browserNow = useNow(5_000);
@@ -66,7 +69,11 @@ export function LatestMoves({
   const watchedMin = Math.floor((browserNow - openedAt) / 60_000);
   const quiet =
     watchedMin < 1 ? "No main lines have moved yet." : `No main lines have moved in the ${watchedMin} min you've been watching.`;
-  const heartbeat = lastFeedUpdateAt ? `DraftKings last sent an update ${formatAgo(now - Date.parse(lastFeedUpdateAt))}` : "Waiting for DraftKings' first update";
+  const heartbeat = lastFeedUpdateAt
+    ? `DraftKings last sent an update ${formatAgo(now - Date.parse(lastFeedUpdateAt))}`
+    : feedSubscribedAt
+      ? `Connected to DraftKings' live feed ${formatAgo(now - Date.parse(feedSubscribedAt))}, no updates since`
+      : "Connecting to DraftKings' live feed";
 
   return (
     <section aria-labelledby="latest-moves" className="mt-6 rounded-xl border border-border bg-surface px-4 py-3">

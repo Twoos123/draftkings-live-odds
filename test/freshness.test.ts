@@ -12,6 +12,7 @@ function feed(over: Partial<FeedStatus> = {}): FeedStatus {
     instanceId: "t",
     ws: "open",
     subscribed: true,
+    subscribedAt: null,
     lastMessageAt: null,
     lastError: null,
     dkToServerMs: null,
