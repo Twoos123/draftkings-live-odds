@@ -276,6 +276,16 @@ Grafana runs at http://localhost:3001. It opens read-only with no login; use adm
 - `feed_latency` stores one row per push message, from any host.
 - The app creates both tables on first write; `clickhouse/schema.sql` has the same DDL.
 
+### Go feed client (optional)
+
+`cmd/dkfeed` is a standalone Go client for the same push feed, for comparison with the Node server. The site doesn't use it. It subscribes to every NFL market, decodes each message into typed structs (`internal/dkfeed`), and logs when the message arrived, how long decoding took, and how long it took to arrive from DraftKings (on DraftKings' clock, as above). On exit it prints parse-time percentiles. It doesn't reconnect: it exits when the connection drops. Needs Go 1.25+.
+
+```bash
+go run ./cmd/dkfeed -for 2m     # log each update for two minutes (or until Ctrl+C)
+go run ./cmd/dkfeed -json       # one JSON line per update on stdout; the log goes to stderr
+go test ./...                   # decodes the recorded frames in test/fixtures, and a fake-feed client test
+```
+
 ### API
 
 | Route | What |
@@ -318,6 +328,8 @@ src/app/api/           stream (SSE), health, time, odds, dev/simulate
 src/components/        Odds table, price cell, latest moves, feed details
 scripts/feed-audit.ts  Push feed vs REST consistency audit
 test/                  Unit tests + real captured DraftKings fixtures
+cmd/dkfeed/            Optional Go CLI for the push feed (not used by the site)
+internal/dkfeed/       Its library: connection + subscription, typed frames, decoding, latency
 ```
 
 ## Adding a second sportsbook or league

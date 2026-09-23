@@ -4,3 +4,8 @@
 .claude
 .next
 node_modules
+# Go feed client: local tooling, not part of the site.
+/go.mod
+/go.sum
+/cmd
+/internal

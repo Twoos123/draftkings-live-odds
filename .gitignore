@@ -41,6 +41,10 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
+# go build ./cmd/dkfeed
+/dkfeed
+/dkfeed.exe
+
 # local tool config
 /.claude/
 
