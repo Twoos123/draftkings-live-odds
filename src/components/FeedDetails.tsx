@@ -47,10 +47,16 @@ export function FeedDetails({
             : "—",
       ],
       [
-        "ClickHouse",
+        "Line history (ClickHouse)",
         feed.sink.enabled
-          ? `${feed.sink.written} rows written${feed.sink.lastError ? ` · error: ${feed.sink.lastError}` : ""}`
-          : "off on this deployment (optional local analytics, see README)",
+          ? [
+              feed.history && (feed.history.markets ? `recording ${feed.history.markets} markets` : "waiting for a copy of the board"),
+              `${feed.sink.written} rows written`,
+              feed.sink.lastError && `error: ${feed.sink.lastError}`,
+            ]
+              .filter(Boolean)
+              .join(" · ")
+          : "off on this deployment (see README)",
       ],
       ["Server instance · clock offset to DraftKings", `${feed.instanceId} · ${feed.dkClockOffsetMs} ms`],
     );

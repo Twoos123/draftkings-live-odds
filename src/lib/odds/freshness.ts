@@ -31,6 +31,15 @@ export function formatAgo(ms: number): string {
   return `${Math.floor(m / 60)}h ${m % 60}m ago`;
 }
 
+/** "12m ago" for the last few hours, then "Tue 3:42 PM", then "Sep 14, 3:42 PM". */
+export function formatWhen(at: number, now: number): string {
+  const age = now - at;
+  if (age < 6 * 3_600_000) return formatAgo(age);
+  const opts: Intl.DateTimeFormatOptions =
+    age < 6 * 86_400_000 ? { weekday: "short", hour: "numeric", minute: "2-digit" } : { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" };
+  return new Intl.DateTimeFormat(undefined, opts).format(at);
+}
+
 /** Everything is on the browser's clock here. */
 export function describeFreshness({ connection, lastMessageAt, feed, board }: FreshnessInput, now: number): Freshness {
   if (connection !== "open" && lastMessageAt !== null) {

@@ -47,6 +47,7 @@ Then open http://localhost:3000. No accounts, keys or configuration are needed. 
    - A **Latest line moves** panel lists recent changes; click one to jump to the game.
    - A sticky toolbar holds the live status, a "≈0.2 s behind DraftKings" latency badge, team search, American/decimal odds, and **Refresh**, which re-checks every line now.
    - **How to read these odds** explains spreads, totals and moneylines.
+   - **Line history** under each game lists every recorded move, when [line history](#line-history) is on.
    - Hovering a price shows its implied win probability.
    - When the data can't be trusted, the page says so.
 
@@ -93,7 +94,7 @@ The brief says the *how* is the main thing being evaluated. Options considered:
 - The **browser** loads the board from the REST endpoint, which DraftKings serves to browsers cross-origin by design.
 - Nothing is spoofed or proxied.
 
-On a host whose IP DraftKings' REST endpoint accepts (e.g. running locally), the server also keeps its own board via the same `BoardEngine`. That powers `/api/odds` and full ClickHouse history.
+On a host whose IP DraftKings' REST endpoint accepts (e.g. running locally), the server also keeps its own board via the same `BoardEngine`. That powers `/api/odds` and the `odds_ticks` table. [Line history](#line-history) doesn't need it.
 
 **Geo:** odds are readable outside legal betting states (tested from Ontario). The app uses the New Jersey board; Ontario works too (`DK_REST_SITE=CA-ON-SB`, `DK_WS_SITE=dkcaon`, `DK_WS_HOST=sportsbook-ws-ca-on.draftkings.com`).
 
@@ -216,6 +217,17 @@ Details that matter (all covered by tests using real captured messages):
 
 This is mapped to a clean shape (`src/lib/odds/types.ts`): **game → market (moneyline / spread / total) → side (away/home, over/under) → line + odds**, with the previous price and the time of the last move.
 
+## Line history
+
+With ClickHouse configured, the server records every price change DraftKings pushes, and the page shows them: **Latest line moves** includes moves from before you opened the page, and **Line history** on each game lists every recorded move for it. It works on Vercel. To turn it on for the live site, see [Deploying](#deploying).
+
+- **Recorded from the push feed.** Each update says what a price changed *to*, and when DraftKings made the change. The server writes that to `price_changes`. It needs no copy of the board of its own, so it works where DraftKings blocks the server from the REST board.
+- **The price before.** The feed doesn't say what a price was. The server remembers the last price it saw for each side (market plus DraftKings' label, like "GB Packers" or "Over", which stays the same when a line moves and its selection id changes). For a side's first move on a connection, it takes the price from a copy of the board: its own where DraftKings allows it, otherwise the board a viewer's browser loaded from DraftKings. The server asks for one when it needs it (`history.needsBoard` in the status: at the start, after a reconnect, and every 10 minutes), and the browser posts it to `/api/history/board`.
+- **What a viewer's board can and can't change.** It only supplies the "was" price. The new price and its time always come from the feed, and a board price only counts if its selection id is the one that moved, so a stale board can't put a move on the wrong line. Each row records where its previous price came from (`prev_source`: `feed`, `board` or `viewer`).
+- **Only while someone is watching.** On Vercel the server connects to DraftKings only while someone has the page open, so that's when moves are recorded. A price that changed while no one was watching shows up as the next recorded price, with "?" for what it was before. Recording around the clock needs an always-on process. Vercel's free plan can't run one (a function running all month would use about 4× the plan's included memory-hours); the Go worker in [Adding a second sportsbook](#adding-a-second-sportsbook-or-league) is where that would go.
+- **Only the board's markets.** The feed also carries some other sports' markets; those are ignored.
+- Several server instances can record the same change. `price_changes` is a `ReplacingMergeTree` that keeps one row, preferring the one that knows the previous price.
+
 ## Reliability
 
 - **Push feed:**
@@ -241,7 +253,7 @@ git clone https://github.com/Twoos123/draftkings-live-odds.git
 cd draftkings-live-odds
 npm install
 npm run dev          # http://localhost:3000
-npm test             # 38 tests, using real captured DraftKings data
+npm test             # 54 tests, using real captured DraftKings data
 npm run typecheck
 npm run build        # production build
 npm run audit        # 15-min check that the push feed misses nothing (see above)
@@ -253,7 +265,7 @@ To see the move highlight without waiting for DraftKings, run `curl -X POST loca
 
 ### ClickHouse + Grafana (optional)
 
-This is local analytics built around Betstamp's stack. The live site doesn't use it: the brief doesn't require it, a hosted ClickHouse isn't free, and on Vercel the server can only record latency, not prices (see `odds_ticks` below). Needs Docker.
+Local analytics built around Betstamp's stack, and the store for [line history](#line-history). Needs Docker. For the live site, use ClickHouse Cloud (see [Deploying](#deploying)).
 
 ```bash
 docker compose up -d
@@ -272,9 +284,10 @@ Grafana runs at http://localhost:3001. It opens read-only with no login; use adm
 
 ![Grafana dashboard](docs/grafana.png)
 
+- `price_changes` stores every price change from the push feed, with the price before it when known (see [Line history](#line-history)). Written from any host.
 - `odds_ticks` stores every observed price (`snapshot` baseline, `ws` moves, `resync` corrections) with DraftKings' timestamp and ours. It's a `ReplacingMergeTree`, so several instances recording the same move collapse to one row. It's written from the server's own board, so it needs a host DraftKings' REST endpoint accepts (e.g. local).
 - `feed_latency` stores one row per push message, from any host.
-- The app creates both tables on first write; `clickhouse/schema.sql` has the same DDL.
+- The app creates the tables on first use; `clickhouse/schema.sql` has the same DDL.
 
 ### Go feed client (optional)
 
@@ -296,6 +309,8 @@ go test ./...                   # decodes the recorded frames in test/fixtures, 
 | `GET /api/health` | Push-feed status for the instance that answers (`idle` if no one is viewing through it), latency percentiles, counters, and whether the server can reach the REST board itself. |
 | `GET /api/time` | Current time on DraftKings' clock, for the browser's clock correction. |
 | `GET /api/odds` | The server's own copy of the board as JSON. Returns 503 with the reason on Vercel, where DraftKings blocks the server from the REST board. |
+| `GET /api/history?markets=…` | Recorded price changes for DraftKings market ids (e.g. `1_84695613,2_84695613`), oldest first. `&moves` skips changes whose previous price isn't known; `&limit=` keeps the newest (max 2000). `{"enabled": false}` without ClickHouse. |
+| `POST /api/history/board` | A browser's copy of the board, sent when the server asks for one; see [Line history](#line-history). |
 
 ## Deploying
 
@@ -310,7 +325,14 @@ No settings or environment variables are needed. Either:
   npx vercel git connect        # optional: auto-deploy on every push to main
   ```
 
-Functions run in `iad1` (Washington, D.C.) by default: 7 ms from DraftKings' socket edge. ClickHouse stays off unless `CLICKHOUSE_URL` is set. `.vercelignore` keeps local `.env*` files out of CLI uploads.
+Functions run in `iad1` (Washington, D.C.) by default: 7 ms from DraftKings' socket edge. `.vercelignore` keeps local `.env*` files out of CLI uploads.
+
+[Line history](#line-history) is off unless `CLICKHOUSE_URL` is set. To turn it on:
+1. Create a service at https://clickhouse.cloud, in a US East region (near `iad1`).
+2. In the Vercel project, under **Settings → Environment Variables**, add for Production: `CLICKHOUSE_URL` (the service's HTTPS endpoint, `https://….clickhouse.cloud:8443`), `CLICKHOUSE_USER` (`default`) and `CLICKHOUSE_PASSWORD`.
+3. Redeploy. The tables are created on first write.
+
+**Feed details** then shows "Line history (ClickHouse): recording 96 markets". Grafana can point at the same service.
 
 After deploying, open the site and check **Feed details**:
 - the board says "last checked … ago";
@@ -320,14 +342,15 @@ After deploying, open the site and check **Feed details**:
 ## Project layout
 
 ```
-src/lib/dk/            DraftKings-specific: endpoints, raw schemas, REST board, WebSocket feed
+src/lib/dk/            DraftKings-specific: endpoints, raw schemas, REST board, WebSocket feed,
+                       price changes for line history (prices.ts)
 src/lib/odds/          Book-agnostic: clean types, delta store, BoardEngine (runs in server and browser),
-                       normalize + diff, formatting, freshness copy
+                       normalize + diff, formatting, freshness copy, placing recorded moves (history.ts)
 src/lib/hub.ts         Server: push-feed connection, SSE relay, latency, health, optional server board
-src/lib/clickhouse.ts  Optional tick/latency writer
+src/lib/clickhouse.ts  Optional writer (ticks, price changes, latency) and line-history reader
 src/hooks/             Browser: SSE + BoardEngine + board checks (useOddsStream)
-src/app/api/           stream (SSE), health, time, odds, dev/simulate
-src/components/        Odds table, price cell, latest moves, feed details
+src/app/api/           stream (SSE), health, time, odds, history, dev/simulate
+src/components/        Odds table, price cell, latest moves, line history, feed details
 scripts/feed-audit.ts  Push feed vs REST consistency audit
 test/                  Unit tests + real captured DraftKings fixtures
 cmd/dkfeed/            Optional Go CLI for the push feed (not used by the site)

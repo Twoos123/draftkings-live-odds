@@ -16,7 +16,8 @@ function sideOf(s: DkSelection): Side | null {
   return t === "away" || t === "home" || t === "over" || t === "under" ? t : null;
 }
 
-function priceOf(s: DkSelection, type: MarketType): Price | null {
+/** A selection's odds in both formats, from whichever of DK's fields it carries. */
+export function oddsOf(s: DkSelection): Omit<Price, "line"> | null {
   const parsedDecimal = s.displayOdds?.decimal ? Number(s.displayOdds.decimal) : NaN;
   const american = parseAmerican(s.displayOdds?.american);
   const decimal =
@@ -28,9 +29,15 @@ function priceOf(s: DkSelection, type: MarketType): Price | null {
           ? Math.round(americanToDecimal(american) * 100) / 100
           : null;
   if (decimal === null) return null;
+  return { american: american ?? decimalToAmerican(decimal), decimal };
+}
+
+function priceOf(s: DkSelection, type: MarketType): Price | null {
+  const odds = oddsOf(s);
+  if (!odds) return null;
   const line = type === "moneyline" ? null : (s.points ?? null);
   if (type !== "moneyline" && line === null) return null;
-  return { line, american: american ?? decimalToAmerican(decimal), decimal };
+  return { line, ...odds };
 }
 
 function team(e: DkEvent, role: "Home" | "Away"): Team | null {

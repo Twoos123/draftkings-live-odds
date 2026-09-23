@@ -1,8 +1,9 @@
 import type { TickSink } from "./clickhouse";
 import type { Feed, FeedHandlers } from "./dk/feed";
+import { boardSides, PriceTracker } from "./dk/prices";
 import type { DkDelta, DkSnapshot, DkUpdateMeta, ParseIssue } from "./dk/schema";
 import { BoardEngine, type BoardChange } from "./odds/engine";
-import type { FeedHealth, FeedStatus, Game, StreamMessage } from "./odds/types";
+import type { BoardSide, FeedHealth, FeedStatus, Game, StreamMessage } from "./odds/types";
 import { RollingWindow } from "./stats";
 
 export interface HubDeps {
@@ -62,12 +63,18 @@ export function encodeFrame(msg: StreamMessage, event: string = msg.type): Uint8
  * Where the server *can* reach the REST board (e.g. local dev), it also keeps
  * its own copy via the same BoardEngine, for /api/odds and ClickHouse.
  *
+ * With ClickHouse configured, it records every price change for line history
+ * (see PriceTracker), on any host.
+ *
  * Starts on the first viewer and stops after the last leaves, which suits
  * Vercel: no always-on process, but concurrent requests on a warm instance
  * share this object.
  */
 export class OddsHub {
   private readonly engine: BoardEngine;
+  private readonly prices = new PriceTracker();
+  /** Whether this session (first viewer to idle) has been subscribed yet, to tell a reconnect from the first connect. */
+  private sessionSubscribed = false;
   private listeners = new Set<Listener>();
   private feed: Feed | null = null;
   private recent: { at: number; msg: StreamMessage }[] = [];
@@ -137,7 +144,7 @@ export class OddsHub {
   async getBoard(maxAgeMs: number) {
     const age = this.engine.lastSnapshotAt === null ? Infinity : this.deps.now() - this.engine.lastSnapshotAt;
     const live = this.engine.hasData && (this.feed?.subscribed ?? false);
-    if (maxAgeMs === 0 || (!live && age > maxAgeMs)) await this.engine.resync();
+    if (maxAgeMs === 0 || (!live && age > maxAgeMs)) await this.resyncServerBoard();
     return {
       games: this.engine.games(),
       asOf: this.engine.lastSnapshotAt === null ? null : this.iso(this.engine.lastSnapshotAt),
@@ -187,7 +194,18 @@ export class OddsHub {
         resyncCorrections: this.engine.counters.resyncCorrections,
       },
       sink: this.deps.sink.status(),
+      history: this.deps.sink.enabled ? { needsBoard: this.feed !== null && this.prices.needsBoard(now), markets: this.prices.marketCount } : null,
     };
+  }
+
+  /**
+   * A copy of the board from a viewer's browser, which loaded it from
+   * DraftKings. Only used for the price *before* a side's first move on this
+   * connection; see PriceTracker. Returns how many sides were taken.
+   */
+  takeViewerBoard(sides: BoardSide[]): number {
+    if (!this.feed || !this.deps.sink.enabled) return 0;
+    return this.prices.takeBoard(sides, "viewer", this.deps.now());
   }
 
   /** Current time on DraftKings' clock. /api/time serves this so browsers align to it too. */
@@ -210,6 +228,10 @@ export class OddsHub {
     // Both timestamps are DraftKings', so this needs no clock correction.
     if (meta.createdTime && meta.publishedTime) this.dkInternal.push(Date.parse(meta.publishedTime) - Date.parse(meta.createdTime));
     this.deps.sink.recordLatency(meta, receivedOnDkClock, this.deps.instanceId);
+    if (this.deps.sink.enabled) {
+      const changes = this.prices.observe(delta);
+      if (changes.length) this.deps.sink.recordChanges(changes, meta, receivedOnDkClock);
+    }
 
     const msg: StreamMessage = {
       type: "delta",
@@ -228,6 +250,8 @@ export class OddsHub {
   private start() {
     if (this.feed) return;
     this.downSince = this.deps.now();
+    this.prices.reset();
+    this.sessionSubscribed = false;
     this.feed = this.deps.createFeed({
       onState: (state) => {
         if (state === "closed") this.counters.reconnects++;
@@ -240,8 +264,11 @@ export class OddsHub {
         this.everSubscribed = true;
         this.subscribedAt = this.deps.now();
         this.downSince = null;
+        // Updates may have been missed while disconnected, so the prices we knew are suspect.
+        if (this.sessionSubscribed) this.prices.forgetPrices();
+        this.sessionSubscribed = true;
         this.broadcastStatus();
-        void this.engine.resync();
+        void this.resyncServerBoard();
       },
       onUpdate: (delta, meta, receivedAt) => this.ingest(delta, meta, receivedAt),
       onError: (message) => {
@@ -263,7 +290,13 @@ export class OddsHub {
     // Best effort: where DK blocks this server's IP (Vercel) this keeps failing, so back off to 5 min.
     const base = this.feed?.subscribed ? this.opts.resyncIntervalMs : this.opts.fallbackPollMs;
     const wait = Math.min(base * 2 ** Math.min(this.engine.snapshotFailures, 5), 5 * 60_000);
-    if (now - this.engine.lastSnapshotAttemptAt >= wait) void this.engine.resync();
+    if (now - this.engine.lastSnapshotAttemptAt >= wait) void this.resyncServerBoard();
+  }
+
+  /** Re-fetch the server's own board; where that works, it's also the baseline for recorded moves. */
+  private async resyncServerBoard() {
+    const ok = await this.engine.resync();
+    if (ok && this.feed && this.deps.sink.enabled) this.prices.takeBoard(boardSides(this.engine.gameMap().values()), "board", this.deps.now());
   }
 
   /** The server's own board only feeds ClickHouse; browsers build theirs from the relayed deltas. */

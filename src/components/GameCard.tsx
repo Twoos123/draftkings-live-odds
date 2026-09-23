@@ -1,8 +1,9 @@
 "use client";
 
-import { memo } from "react";
+import { memo, useState } from "react";
 import type { OddsFormat } from "@/lib/odds/format";
 import type { Game, Team } from "@/lib/odds/types";
+import { GameHistory } from "./GameHistory";
 import { PriceCell } from "./PriceCell";
 
 export const GRID =
@@ -36,6 +37,7 @@ export const GameCard = memo(function GameCard({ game, format, clockOffsetMs }: 
   const started = game.status !== "NOT_STARTED";
   const paused = [moneyline, spread, total].some((m) => m?.suspended);
   const kickoff = new Date(game.startTime).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  const [historyOpen, setHistoryOpen] = useState(false);
 
   return (
     <div id={`game-${game.id}`} className="game-card scroll-mt-28 border-b border-border px-3 py-2.5 last:border-b-0 sm:px-4">
@@ -46,6 +48,18 @@ export const GameCard = memo(function GameCard({ game, format, clockOffsetMs }: 
           <time dateTime={game.startTime}>{kickoff}</time>
         )}
         {paused && <span>· Betting paused on some markets</span>}
+        <button
+          type="button"
+          onClick={() => setHistoryOpen(!historyOpen)}
+          aria-expanded={historyOpen}
+          aria-controls={`history-${game.id}`}
+          className="ml-auto inline-flex items-center gap-1 rounded px-1 hover:text-foreground"
+        >
+          Line history
+          <svg className={`h-3 w-3 transition-transform ${historyOpen ? "rotate-180" : ""}`} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.75" aria-hidden>
+            <path d="m4 6 4 4 4-4" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </button>
       </div>
       <div className={`${GRID} gap-y-1.5`}>
         {(
@@ -62,6 +76,11 @@ export const GameCard = memo(function GameCard({ game, format, clockOffsetMs }: 
           </div>
         ))}
       </div>
+      {historyOpen && (
+        <div id={`history-${game.id}`}>
+          <GameHistory game={game} format={format} />
+        </div>
+      )}
     </div>
   );
 });

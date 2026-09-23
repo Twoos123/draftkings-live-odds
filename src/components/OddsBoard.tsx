@@ -9,6 +9,7 @@ import { describeFreshness, formatAgo, type Freshness, type Tone } from "@/lib/o
 import type { BoardStatus, FeedStatus, Game, LatencyStats } from "@/lib/odds/types";
 import { FeedDetails } from "./FeedDetails";
 import { GameCard, GRID } from "./GameCard";
+import { MoveLogContext } from "./GameHistory";
 import { HowToRead } from "./HowToRead";
 import { LatestMoves } from "./LatestMoves";
 
@@ -117,7 +118,7 @@ function FormatToggle({ format, onChange }: { format: OddsFormat; onChange: (f: 
 }
 
 export function OddsBoard() {
-  const { games, feed, board, connection, lastMessageAt, latency, refresh, refreshing, clockOffsetMs } = useOddsStream();
+  const { games, moveLog, feed, board, connection, lastMessageAt, latency, refresh, refreshing, clockOffsetMs } = useOddsStream();
   const [format, setFormat] = useOddsFormat();
   const [query, setQuery] = useState("");
   const [openedAt] = useState(() => Date.now());
@@ -140,113 +141,116 @@ export function OddsBoard() {
   const loading = !board.hasData && !board.snapshotError;
 
   return (
-    <main className="mx-auto w-full max-w-4xl px-4 pb-12 sm:px-6">
-      <header className="pt-8 sm:pt-12">
-        <p className="text-xs font-semibold uppercase tracking-[0.12em] text-muted">DraftKings · NFL</p>
-        <h1 className="mt-1 text-2xl font-semibold tracking-tight sm:text-3xl">NFL odds, live</h1>
-        <p className="mt-2 max-w-prose text-sm text-muted sm:text-base">
-          Moneyline, spread and total for every upcoming game, straight from DraftKings. Prices update on their own the moment a line moves, so
-          there&apos;s no need to refresh.
-        </p>
-      </header>
+    <MoveLogContext value={moveLog}>
+      <main className="mx-auto w-full max-w-4xl px-4 pb-12 sm:px-6">
+        <header className="pt-8 sm:pt-12">
+          <p className="text-xs font-semibold uppercase tracking-[0.12em] text-muted">DraftKings · NFL</p>
+          <h1 className="mt-1 text-2xl font-semibold tracking-tight sm:text-3xl">NFL odds, live</h1>
+          <p className="mt-2 max-w-prose text-sm text-muted sm:text-base">
+            Moneyline, spread and total for every upcoming game, straight from DraftKings. Prices update on their own the moment a line moves, so
+            there&apos;s no need to refresh.
+          </p>
+        </header>
 
-      <div className="sticky top-0 z-20 -mx-4 mt-5 border-b border-border bg-background/85 px-4 py-3 backdrop-blur sm:-mx-6 sm:px-6">
-        <div className="flex flex-wrap items-center gap-2">
-          <StatusPill fresh={fresh} board={board} now={now} />
-          <LatencyBadge latency={latency} feed={feed} />
-          {/* Phones: status + Refresh on one row, search + format below. Wider: one row. */}
-          <button
-            type="button"
-            onClick={refresh}
-            disabled={refreshing}
-            aria-label="Refresh: re-check every line with DraftKings now"
-            title="Re-check every line with DraftKings now"
-            className="ml-auto inline-flex shrink-0 items-center gap-1.5 rounded-full border border-border bg-surface px-3 py-1.5 text-sm font-medium hover:bg-cell disabled:opacity-60 sm:order-last sm:ml-0"
-          >
-            <svg className={`h-3.5 w-3.5 ${refreshing ? "animate-spin" : ""}`} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" aria-hidden>
-              <path d="M13.5 8a5.5 5.5 0 1 1-1.61-3.89M13.5 2.5v3h-3" />
-            </svg>
-            <span>{refreshing ? "Checking…" : "Refresh"}</span>
-          </button>
-          <div className="flex w-full items-center gap-2 sm:ml-auto sm:w-auto">
-            <label className="relative min-w-0 flex-1 sm:w-52 sm:flex-none">
-              <span className="sr-only">Search teams</span>
-              <svg className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.75" aria-hidden>
-                <circle cx="7" cy="7" r="4.5" />
-                <path d="m10.5 10.5 3 3" strokeLinecap="round" />
+        <div className="sticky top-0 z-20 -mx-4 mt-5 border-b border-border bg-background/85 px-4 py-3 backdrop-blur sm:-mx-6 sm:px-6">
+          <div className="flex flex-wrap items-center gap-2">
+            <StatusPill fresh={fresh} board={board} now={now} />
+            <LatencyBadge latency={latency} feed={feed} />
+            {/* Phones: status + Refresh on one row, search + format below. Wider: one row. */}
+            <button
+              type="button"
+              onClick={refresh}
+              disabled={refreshing}
+              aria-label="Refresh: re-check every line with DraftKings now"
+              title="Re-check every line with DraftKings now"
+              className="ml-auto inline-flex shrink-0 items-center gap-1.5 rounded-full border border-border bg-surface px-3 py-1.5 text-sm font-medium hover:bg-cell disabled:opacity-60 sm:order-last sm:ml-0"
+            >
+              <svg className={`h-3.5 w-3.5 ${refreshing ? "animate-spin" : ""}`} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" aria-hidden>
+                <path d="M13.5 8a5.5 5.5 0 1 1-1.61-3.89M13.5 2.5v3h-3" />
               </svg>
-              <input
-                type="search"
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder="Search teams"
-                className="w-full rounded-full border border-border bg-surface py-1.5 pl-8 pr-3 text-sm outline-none placeholder:text-muted focus:border-foreground/40"
-              />
-            </label>
-            <FormatToggle format={format} onChange={setFormat} />
-          </div>
-        </div>
-        {fresh.detail && (
-          <div role="status" className={`mt-3 rounded-lg border px-3 py-2 text-sm ${TONE_BANNER[fresh.tone]}`}>
-            {fresh.detail}
-          </div>
-        )}
-      </div>
-
-      {games.size > 0 && (
-        <LatestMoves games={games} format={format} clockOffsetMs={clockOffsetMs} openedAt={openedAt}
-          lastFeedUpdateAt={feed?.lastMessageAt ?? null}
-          feedSubscribedAt={feed?.subscribedAt ?? null}
-        />
-      )}
-      <HowToRead />
-
-      <div className={`transition-opacity ${fresh.dim ? "opacity-50 grayscale" : ""}`}>
-        {loading && <LoadingBoard />}
-        {!loading && games.size === 0 && (
-          <p className="mt-8 rounded-xl border border-border bg-surface px-4 py-8 text-center text-muted">
-            {board.hasData ? "DraftKings has no upcoming NFL games listed right now." : "No odds to show yet. We'll load them as soon as DraftKings responds."}
-          </p>
-        )}
-        {games.size > 0 && groups.length === 0 && (
-          <p className="mt-8 rounded-xl border border-border bg-surface px-4 py-8 text-center text-muted">
-            No games match “{query}”.{" "}
-            <button type="button" className="underline" onClick={() => setQuery("")}>
-              Show all games
+              <span>{refreshing ? "Checking…" : "Refresh"}</span>
             </button>
-          </p>
-        )}
-        {groups.map(({ key, label, games: dayGames }) => (
-          <section key={key} className="mt-8">
-            <h2 className="mb-2 px-1 text-xs font-semibold uppercase tracking-[0.12em] text-muted">
-              {label} <span className="font-normal normal-case tracking-normal">· {dayGames.length} {dayGames.length === 1 ? "game" : "games"}</span>
-            </h2>
-            <div className="overflow-hidden rounded-xl border border-border bg-surface">
-              <div className={`${GRID} border-b border-border px-3 py-2 text-[11px] font-medium uppercase tracking-wider text-muted sm:px-4`}>
-                <span>Game</span>
-                <span className="text-center">Spread</span>
-                <span className="text-center">Total</span>
-                <span className="text-center">Moneyline</span>
-              </div>
-              {dayGames.map((g) => (
-                <GameCard key={g.id} game={g} format={format} clockOffsetMs={clockOffsetMs} />
-              ))}
+            <div className="flex w-full items-center gap-2 sm:ml-auto sm:w-auto">
+              <label className="relative min-w-0 flex-1 sm:w-52 sm:flex-none">
+                <span className="sr-only">Search teams</span>
+                <svg className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.75" aria-hidden>
+                  <circle cx="7" cy="7" r="4.5" />
+                  <path d="m10.5 10.5 3 3" strokeLinecap="round" />
+                </svg>
+                <input
+                  type="search"
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder="Search teams"
+                  className="w-full rounded-full border border-border bg-surface py-1.5 pl-8 pr-3 text-sm outline-none placeholder:text-muted focus:border-foreground/40"
+                />
+              </label>
+              <FormatToggle format={format} onChange={setFormat} />
             </div>
-          </section>
-        ))}
-      </div>
+          </div>
+          {fresh.detail && (
+            <div role="status" className={`mt-3 rounded-lg border px-3 py-2 text-sm ${TONE_BANNER[fresh.tone]}`}>
+              {fresh.detail}
+            </div>
+          )}
+        </div>
 
-      <FeedDetails feed={feed} board={board} latency={latency} now={now} serverNow={serverNow} />
+        {games.size > 0 && (
+          <LatestMoves games={games} moveLog={moveLog} format={format} clockOffsetMs={clockOffsetMs} openedAt={openedAt}
+            lastFeedUpdateAt={feed?.lastMessageAt ?? null}
+            feedSubscribedAt={feed?.subscribedAt ?? null}
+            historyOn={feed?.history != null}
+          />
+        )}
+        <HowToRead />
 
-      <footer className="mt-6 text-xs leading-relaxed text-muted">
-        Odds from DraftKings Sportsbook (New Jersey), pushed from DraftKings&apos; live feed and fully re-checked every minute. Main markets only. Not
-        affiliated with DraftKings.{" "}
-        <a className="underline" href={REPO_URL}>
-          Source code
-        </a>
-        .
-      </footer>
-    </main>
+        <div className={`transition-opacity ${fresh.dim ? "opacity-50 grayscale" : ""}`}>
+          {loading && <LoadingBoard />}
+          {!loading && games.size === 0 && (
+            <p className="mt-8 rounded-xl border border-border bg-surface px-4 py-8 text-center text-muted">
+              {board.hasData ? "DraftKings has no upcoming NFL games listed right now." : "No odds to show yet. We'll load them as soon as DraftKings responds."}
+            </p>
+          )}
+          {games.size > 0 && groups.length === 0 && (
+            <p className="mt-8 rounded-xl border border-border bg-surface px-4 py-8 text-center text-muted">
+              No games match “{query}”.{" "}
+              <button type="button" className="underline" onClick={() => setQuery("")}>
+                Show all games
+              </button>
+            </p>
+          )}
+          {groups.map(({ key, label, games: dayGames }) => (
+            <section key={key} className="mt-8">
+              <h2 className="mb-2 px-1 text-xs font-semibold uppercase tracking-[0.12em] text-muted">
+                {label} <span className="font-normal normal-case tracking-normal">· {dayGames.length} {dayGames.length === 1 ? "game" : "games"}</span>
+              </h2>
+              <div className="overflow-hidden rounded-xl border border-border bg-surface">
+                <div className={`${GRID} border-b border-border px-3 py-2 text-[11px] font-medium uppercase tracking-wider text-muted sm:px-4`}>
+                  <span>Game</span>
+                  <span className="text-center">Spread</span>
+                  <span className="text-center">Total</span>
+                  <span className="text-center">Moneyline</span>
+                </div>
+                {dayGames.map((g) => (
+                  <GameCard key={g.id} game={g} format={format} clockOffsetMs={clockOffsetMs} />
+                ))}
+              </div>
+            </section>
+          ))}
+        </div>
+
+        <FeedDetails feed={feed} board={board} latency={latency} now={now} serverNow={serverNow} />
+
+        <footer className="mt-6 text-xs leading-relaxed text-muted">
+          Odds from DraftKings Sportsbook (New Jersey), pushed from DraftKings&apos; live feed and fully re-checked every minute. Main markets only. Not
+          affiliated with DraftKings.{" "}
+          <a className="underline" href={REPO_URL}>
+            Source code
+          </a>
+          .
+        </footer>
+      </main>
+    </MoveLogContext>
   );
 }
 

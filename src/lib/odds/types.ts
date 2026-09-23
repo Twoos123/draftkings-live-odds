@@ -117,6 +117,41 @@ export interface FeedStatus {
     resyncCorrections: number;
   };
   sink: { enabled: boolean; lastError: string | null; written: number };
+  /**
+   * Price-change recording for line history; null when there's no database.
+   * `needsBoard`: the server has no recent copy of the board's prices to
+   * measure moves against, so browsers should send theirs (see BoardSide).
+   */
+  history: { needsBoard: boolean; markets: number } | null;
+}
+
+/** One side of the board as a browser sends it to the server, so moves have a "from" price. */
+export interface BoardSide extends Price {
+  marketId: string;
+  selectionId: string;
+  label: string;
+}
+
+/** Where a recorded move's previous price came from. */
+export type FromSource = "feed" | "board" | "viewer";
+
+/** One price change DraftKings pushed, as recorded for line history (/api/history). */
+export interface RecordedChange {
+  marketId: string;
+  selectionId: string;
+  /** DraftKings' label for the side: a team name, "Over" or "Under". */
+  label: string;
+  to: Price;
+  /** The price before, if known; null when recording started mid-way. */
+  from: Price | null;
+  /**
+   * `feed`: seen earlier on the same push-feed connection. `board`: the
+   * server's own board. `viewer`: the board a viewer's browser loaded from
+   * DraftKings. The new price and its time always come from the push feed.
+   */
+  fromSource: FromSource | null;
+  /** When DraftKings made the change (ISO). */
+  at: string;
 }
 
 /** The browser's copy of the board (see BoardEngine). */

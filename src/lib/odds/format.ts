@@ -1,3 +1,5 @@
+import type { MarketType, Price } from "./types";
+
 // Odds parsing/formatting. DraftKings renders negative American odds with a
 // Unicode minus (U+2212), e.g. "−110", which Number() can't parse.
 
@@ -45,4 +47,10 @@ export type OddsFormat = "american" | "decimal";
 
 export function formatOdds(p: { american: number; decimal: number }, format: OddsFormat): string {
   return format === "american" ? formatAmerican(p.american) : formatDecimal(p.decimal);
+}
+
+/** A price as one string: "−6.5 −110" (spread), "44.5 −105" (total) or "+235" (moneyline). */
+export function formatPrice(market: MarketType, p: Price, format: OddsFormat): string {
+  const line = p.line === null ? null : market === "spread" ? formatSpread(p.line) : String(p.line);
+  return [line, formatOdds(p, format)].filter(Boolean).join(" ");
 }

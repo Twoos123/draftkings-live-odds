@@ -1,8 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { boardSides } from "@/lib/dk/prices";
 import { fetchSnapshot } from "@/lib/dk/snapshot";
 import { BoardEngine } from "@/lib/odds/engine";
+import { lineMoves, type LineMove } from "@/lib/odds/history";
 import type { BoardStatus, FeedStatus, Game, LatencyStats, StreamMessage } from "@/lib/odds/types";
 import { RollingWindow } from "@/lib/stats";
 
@@ -23,6 +25,10 @@ const HIDDEN_CLOSE_MS = 60_000;
 const RECHECK_LIVE_MS = 60_000;
 /** …and while it's down, so the board keeps moving without it. */
 const RECHECK_FALLBACK_MS = 5_000;
+/** Line moves kept in memory for this page, newest first. */
+const MOVE_LOG_SIZE = 200;
+/** At most this often, send the server our board when it asks (for line history). */
+const SEND_BOARD_GAP_MS = 30_000;
 
 const EMPTY_BOARD: BoardStatus = {
   hasData: false,
@@ -67,6 +73,8 @@ export function useOddsStream() {
   const [refreshing, setRefreshing] = useState(false);
   /** DraftKings clock minus browser clock, in ms. */
   const [clockOffsetMs, setClockOffsetMs] = useState(0);
+  /** Every line move seen since this page opened, newest first (the board itself keeps only each side's latest). */
+  const [moveLog, setMoveLog] = useState<LineMove[]>([]);
   const refreshRef = useRef<() => Promise<void>>(async () => {});
 
   useEffect(() => {
@@ -88,11 +96,15 @@ export function useOddsStream() {
     const engine = new BoardEngine({
       fetchSnapshot: (onIssue) => fetchSnapshot(onIssue),
       now: Date.now,
-      onChange: (change) => {
+      onChange: (change, meta, receivedAt) => {
         publishBoard();
         if (change.type === "snapshot") {
           setGames(new Map(change.games.map((g) => [g.id, g])));
           return;
+        }
+        if (change.moves.length) {
+          const logged = lineMoves(change.moves, meta?.createdTime ? Date.parse(meta.createdTime) : receivedAt);
+          setMoveLog((prev) => [...logged, ...prev].slice(0, MOVE_LOG_SIZE));
         }
         // Unchanged games keep their object identity, so their rows skip re-rendering.
         setGames((prev) => {
@@ -108,8 +120,26 @@ export function useOddsStream() {
       setBoard({ hasData: engine.hasData, lastSnapshotAt: engine.lastSnapshotAt, snapshotError: engine.snapshotError, counters: { ...engine.counters } });
 
     const loadBoard = async () => {
-      await engine.resync();
+      const ok = await engine.resync();
       publishBoard();
+      return ok;
+    };
+
+    /**
+     * The server records every price change for line history, but DraftKings
+     * won't serve it the board on Vercel, so it asks browsers for theirs to
+     * know each side's price before its first move. Loaded fresh: the server
+     * may be asking because its feed reconnected and updates were missed.
+     */
+    let boardSentAt = 0;
+    const sendBoard = async () => {
+      boardSentAt = Date.now();
+      if (!(await loadBoard())) return;
+      await fetch("/api/history/board", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(boardSides(engine.gameMap().values())),
+      }).catch(() => {});
     };
 
     const received = (sentAt: string, dkCreatedAt?: string | null) => {
@@ -167,6 +197,7 @@ export function useOddsStream() {
         feedStatus = msg.status;
         setFeed(msg.status);
         received(msg.sentAt);
+        if (msg.status.history?.needsBoard && Date.now() - boardSentAt >= SEND_BOARD_GAP_MS) void sendBoard();
       });
 
       // Deltas can arrive on both streams during a handover; applying one twice is harmless.
@@ -266,5 +297,5 @@ export function useOddsStream() {
     }
   }, []);
 
-  return { games, feed, board, connection, lastMessageAt, latency, refresh, refreshing, clockOffsetMs };
+  return { games, moveLog, feed, board, connection, lastMessageAt, latency, refresh, refreshing, clockOffsetMs };
 }

@@ -2,6 +2,7 @@
 
 import { memo, useEffect, useState } from "react";
 import { formatOdds, formatProbability, formatSpread, type OddsFormat } from "@/lib/odds/format";
+import { direction } from "@/lib/odds/history";
 import type { Market, Price, Selection, Side } from "@/lib/odds/types";
 
 /** Keep showing the old price beside the new one for this long. */
@@ -14,12 +15,6 @@ function lineText(market: Market, line: number | null, side: Side): string | nul
   if (market.type === "spread") return formatSpread(line);
   if (market.type === "total") return `${side === "over" ? "O" : "U"} ${line}`;
   return null;
-}
-
-/** +1 if the price/line went up, -1 if down. */
-function direction(prev: Price, sel: Selection): number {
-  if (prev.american !== sel.american) return Math.sign(sel.american - prev.american);
-  return Math.sign((sel.line ?? 0) - (prev.line ?? 0));
 }
 
 interface CellProps {
