@@ -2,7 +2,7 @@ import { z } from "zod";
 import { getHub } from "@/lib/server";
 
 const BoardSide = z.object({
-  marketId: z.string().regex(/^\d+_\d+$/),
+  marketId: z.string().min(1).max(100),
   selectionId: z.string().min(1).max(100),
   label: z.string().min(1).max(100),
   line: z.number().min(-500).max(500).nullable(),

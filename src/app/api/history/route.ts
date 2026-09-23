@@ -1,7 +1,7 @@
 import { getHistory } from "@/lib/server";
 
-/** DraftKings market ids look like "2_84695613" (spread for one game). */
-const MARKET_ID = /^\d+_\d+$/;
+/** A DraftKings market id (today "2_84695613"). Nothing assumes its format beyond fitting in a comma-separated list. */
+const MARKET_ID = /^[^\s,]{1,100}$/;
 const MAX_MARKETS = 300;
 const MAX_ROWS = 2000;
 

@@ -56,6 +56,30 @@ describe("PriceTracker (line history from the push feed)", () => {
     expect(change).toMatchObject({ label: "ATL Falcons", from: { american: 235 }, to: { american: 250 } });
   });
 
+  it("works out markets from the board and the feed, not from the format of DraftKings' ids", () => {
+    // The same board, with every id renamed to something meaningless.
+    const ids = new Map<string, string>();
+    const opaque = (id: string) => {
+      if (!ids.has(id)) ids.set(id, `id-${ids.size}`);
+      return ids.get(id)!;
+    };
+    const t = new PriceTracker();
+    t.takeBoard(boardSides(board().values()).map((s) => ({ ...s, marketId: opaque(s.marketId), selectionId: opaque(s.selectionId) })), "viewer", NOW);
+
+    // A price change that names only the selection.
+    const [price] = t.observe(deltaOf((d) => d.change.selections.push({ id: opaque(ATL_ML), displayOdds: odds(250, 3.5) })));
+    expect(price).toMatchObject({ marketId: opaque("1_84695613"), label: "ATL Falcons", from: { american: 235 }, to: { american: 250 } });
+
+    // A line move to a new id, which names the one it replaced; then that new id's next change.
+    const [line] = t.observe(deltaOf((d) => d.change.selections.push({ id: "new-over", points: 45.5, displayOdds: odds(-110, 1.91), replacedSelectionId: opaque(OVER) })));
+    expect(line).toMatchObject({ marketId: opaque("3_84695613"), label: "Over", from: { line: 44.5 }, to: { line: 45.5 } });
+    const [next] = t.observe(deltaOf((d) => d.change.selections.push({ id: "new-over", displayOdds: odds(-120, 1.83) })));
+    expect(next).toMatchObject({ from: { line: 45.5, american: -110 }, to: { line: 45.5, american: -120 } });
+
+    // A total's new line that leaves out the points can't be recorded.
+    expect(t.observe(deltaOf((d) => d.change.selections.push({ id: "newer-over", displayOdds: odds(-105, 1.95), replacedSelectionId: "new-over" })))).toEqual([]);
+  });
+
   it("skips updates that leave the price as it was", () => {
     const t = tracker();
     t.observe(atlMoneyline(250));
@@ -85,10 +109,18 @@ describe("PriceTracker (line history from the push feed)", () => {
 
   it("doesn't use a board price for a different line than the one that moved", () => {
     const t = new PriceTracker();
+    // An out-of-date board: the Over was 43.5 then.
     const sides = boardSides(board().values()).map((s) => (s.selectionId === OVER ? { ...s, selectionId: "0OU84695613O4350_1", line: 43.5 } : s));
     t.takeBoard(sides, "viewer", NOW);
-    const [change] = t.observe(deltaOf((d) => d.change.selections.push({ id: OVER, label: "Over", points: 44.5, displayOdds: odds(-110, 1.91) })));
+    const [change] = t.observe(
+      deltaOf((d) => d.add.selections.push({ id: OVER, marketId: "3_84695613", label: "Over", points: 44.5, displayOdds: odds(-110, 1.91) })),
+    );
     expect(change).toMatchObject({ from: null, fromSource: null, to: { line: 44.5, american: -110 } });
+  });
+
+  it("skips a change it can't place rather than guessing from the id", () => {
+    // Never seen, no marketId, and not replacing anything it knows.
+    expect(tracker().observe(deltaOf((d) => d.change.selections.push({ id: "0OU84695613O4650_1", label: "Over", points: 46.5, displayOdds: odds(-110, 1.91) })))).toEqual([]);
   });
 
   it("prefers what the feed said over an older copy of the board", () => {

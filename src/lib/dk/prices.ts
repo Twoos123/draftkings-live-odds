@@ -1,5 +1,4 @@
 import { oddsOf } from "../odds/normalize";
-import { inferMarketId } from "../odds/store";
 import type { BoardSide, FromSource, Game, Price } from "../odds/types";
 import type { DkDelta } from "./schema";
 
@@ -20,6 +19,12 @@ interface Known {
   selectionId: string;
   price: Price;
   source: FromSource;
+}
+
+/** Which market and side a selection id belongs to. */
+interface Placed {
+  marketId: string;
+  label: string;
 }
 
 /** Every side on the board, in the form browsers send it to the server. */
@@ -56,9 +61,16 @@ function sideOf(marketId: string, label: string): string {
  */
 export class PriceTracker {
   private markets = new Set<string>();
+  /** Markets whose sides have a line (spread, total), so an update without one is incomplete. */
+  private lineMarkets = new Set<string>();
   private known = new Map<string, Known>();
-  /** Selection id -> label, for changes that leave the label out (DK's changes are partial). */
-  private labels = new Map<string, string>();
+  /**
+   * Selection id -> its market and label. DK's changes usually leave both
+   * out, so this is learned from the board and then from the feed: an add
+   * carries its marketId, and a line move's new id names the one it replaced.
+   * Nothing is read from the ids themselves.
+   */
+  private placed = new Map<string, Placed>();
   private boardAt: number | null = null;
 
   get marketCount(): number {
@@ -73,8 +85,9 @@ export class PriceTracker {
   /** A new connection to DraftKings: nothing we knew still holds. */
   reset() {
     this.markets.clear();
+    this.lineMarkets.clear();
     this.known.clear();
-    this.labels.clear();
+    this.placed.clear();
     this.boardAt = null;
   }
 
@@ -91,7 +104,10 @@ export class PriceTracker {
    */
   takeBoard(sides: BoardSide[], source: "board" | "viewer", now: number): number {
     this.markets = new Set(sides.map((s) => s.marketId));
-    this.labels = new Map(sides.map((s) => [s.selectionId, s.label]));
+    this.lineMarkets = new Set(sides.filter((s) => s.line !== null).map((s) => s.marketId));
+    // Added to, not replaced: the feed may know a newer id than this copy of the board.
+    for (const [id, p] of this.placed) if (!this.markets.has(p.marketId)) this.placed.delete(id);
+    for (const s of sides) this.placed.set(s.selectionId, { marketId: s.marketId, label: s.label });
     for (const [key, k] of this.known) {
       if (!this.markets.has(key.slice(0, key.indexOf("|"))) && k.source !== "feed") this.known.delete(key);
     }
@@ -112,16 +128,17 @@ export class PriceTracker {
     const out: ObservedChange[] = [];
     const removed = new Set(delta.remove.selections);
     for (const s of [...delta.add.selections, ...delta.change.selections]) {
-      const marketId = s.marketId ?? inferMarketId(s.id);
-      const label = s.label ?? this.labels.get(s.id) ?? (s.replacedSelectionId && this.labels.get(s.replacedSelectionId));
+      const was = this.placed.get(s.id) ?? (s.replacedSelectionId ? this.placed.get(s.replacedSelectionId) : undefined);
+      const marketId = s.marketId ?? was?.marketId;
+      const label = s.label ?? was?.label;
       if (!marketId || !this.markets.has(marketId) || !label) continue;
-      this.labels.set(s.id, label);
+      this.placed.set(s.id, { marketId, label });
       const key = sideOf(marketId, label);
       const known = this.known.get(key);
       const odds = oddsOf(s);
-      // The line is part of the selection id, so a partial change to the same id keeps it.
+      // A line move gets a new selection id, so a partial change to the same id keeps its line.
       const line = s.points ?? (known?.selectionId === s.id ? known.price.line : null);
-      if (!odds || (line === null && /^0(HC|OU)/.test(s.id))) continue;
+      if (!odds || (line === null && this.lineMarkets.has(marketId))) continue;
       const to: Price = { line, ...odds };
       // A known price only counts if it's for this selection or the one this replaced; otherwise we lost track.
       const linked = known && (known.selectionId === s.id || known.selectionId === s.replacedSelectionId || removed.has(known.selectionId));

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { parseWsMessage } from "@/lib/dk/schema";
 import { diffGames, normalizeGames } from "@/lib/odds/normalize";
-import { DkStore, inferMarketId } from "@/lib/odds/store";
+import { DkStore } from "@/lib/odds/store";
 import { deltaOf, loadSnapshot, loadWsFrames, odds, parseUpdate, updateFrame } from "./helpers";
 
 function setup() {
@@ -151,15 +151,6 @@ describe("DkStore indexes", () => {
     store.apply(deltaOf((d) => d.remove.events.push(GAME)));
     expectIndexesMatchData(store);
     expect(store.marketsOf(GAME)).toEqual([]);
-  });
-});
-
-describe("inferMarketId", () => {
-  it("reads the market out of main-line selection ids", () => {
-    expect(inferMarketId("0ML84695613_3")).toBe("1_84695613");
-    expect(inferMarketId("0HC84695613N600_1")).toBe("2_84695613");
-    expect(inferMarketId("0OU84695613O4450_1")).toBe("3_84695613");
-    expect(inferMarketId("0QA372230232#2294390952_13L84240Q1")).toBeNull();
   });
 });
 

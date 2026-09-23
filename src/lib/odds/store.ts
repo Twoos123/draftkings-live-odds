@@ -30,18 +30,6 @@ function removeFromIndex(index: Map<string, Set<string>>, key: string | undefine
   if (set.size === 0) index.delete(key);
 }
 
-const MAIN_MARKET_PREFIX: Record<string, string> = { ML: "1", HC: "2", OU: "3" };
-
-/**
- * Main-line selection ids embed their market: "0HC84695613N600_1" is a
- * selection in market "2_84695613" (HC = handicap/spread = market type 2).
- * Only used as a fallback when an update omits marketId.
- */
-export function inferMarketId(selectionId: string): string | null {
-  const m = /^0(ML|HC|OU)(\d+)/.exec(selectionId);
-  return m ? `${MAIN_MARKET_PREFIX[m[1]]}_${m[2]}` : null;
-}
-
 /**
  * DraftKings' entities exactly as DK models them (events, markets, selections
  * in flat id-keyed maps), kept current by applying push-feed deltas.
@@ -143,10 +131,8 @@ export class DkStore {
     }
     const next = merge(base, s);
     delete next.replacedSelectionId;
-    if (!next.marketId) {
-      const inferred = inferMarketId(s.id);
-      if (inferred && this.markets.has(inferred)) next.marketId = inferred;
-    }
+    // No marketId, and neither this id nor the one it replaced is known: rather
+    // than guess from the id's format, report it so the board gets re-checked.
     const eventId = next.marketId ? this.markets.get(next.marketId)?.eventId : undefined;
     if (!eventId) {
       unresolved.push(`selection:${s.id}`);
