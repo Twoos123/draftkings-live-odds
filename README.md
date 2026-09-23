@@ -10,7 +10,7 @@ Live NFL moneyline, spread and total odds from DraftKings, on a page that update
 
 ## Quick start
 
-Requires Node 20+ and git.
+Requires Node 20.9+ and git.
 
 ```bash
 git clone https://github.com/Twoos123/draftkings-live-odds.git
@@ -157,14 +157,14 @@ The page runs the same check continuously (resync corrections under **Feed detai
 
 | Stage | Median | Ours to change? |
 |---|---|---|
-| Inside DraftKings (created → published) | 20 ms (p95 1.4 s) | No |
+| Inside DraftKings (change created → its socket server sends it) | ~200 ms, varying from under 0.1 s to a few seconds | No |
 | DraftKings → Akamai edge → our server | 7 ms on Vercel `iad1` | Already next door to DraftKings' edge |
 | **Server:** raw frame → parse → validate → encode SSE (+ its own board) | **27 µs** (p99 83 µs) | Yes. See below. |
 | Our server → browser | 38 ms from Toronto | Only by removing the hop |
 | **Browser:** delta → rebuild one game → diff → decorate | **12 µs** (p99 31 µs) | Yes |
 
-Our code is about 0.01% of the total, so **rewriting it in Go, moving to Python, or adding multiprocessing wouldn't make the page any fresher**:
-- **Go** might save ~20 µs.
+The millisecond rows are from the live-site sample in [How fresh are the odds](#how-fresh-are-the-odds) and add up to its 248 ms median; the microsecond rows are from `test/perf.test.ts`. Our code is about 0.01% of the total, so **rewriting it in Go, moving to Python, or adding multiprocessing wouldn't make the page any fresher**:
+- **Go** might save ~20 µs. There is a Go client for the same feed in `cmd/dkfeed`, but I wrote it to learn Go, not for speed (see [Go feed client](#go-feed-client-optional)).
 - **Python** would be slower.
 - **Multiprocessing** would add inter-process hops that cost more than the work itself. There's one socket delivering about one message a second, so there's nothing to parallelize.
 
@@ -180,7 +180,7 @@ The other milliseconds worth chasing were outside the per-update path:
 - **Shorter worst case.** If DraftKings' push feed drops, the browser re-checks the board every 5 s (was 10 s) until it's back.
 - **Honest attribution.** The latency badge shows the total *and* "our part" (DraftKings' socket → our server → you, typically ~50 ms). Feed details separates out time spent inside DraftKings before it publishes a change. That's usually ~20 ms, but we've watched it sit at ~3 s for minutes at a time, which would otherwise look like our lag.
 
-**Deliberately not done: racing the REST board against the push feed.** In both audits, DraftKings' REST board sometimes showed a change 2–3 s before DraftKings published it to the push feed (2 of 13 moves in one audit, 1 of 1 in another). Polling REST every couple of seconds from every open page would catch those cases sooner. But it would multiply our requests to DraftKings by 20–30×, per viewer, to shave seconds off a minority of moves. Push-first with a 60 s check is the reasonable trade; the knob is `RECHECK_LIVE_MS` in `src/hooks/useOddsStream.ts` if Betstamp wanted to make it differently.
+**Deliberately not done: racing the REST board against the push feed.** In the audit above, DraftKings' REST board showed 2 of the 13 moves before the push feed did, because DraftKings held those pushes for ~2 s (an earlier audit saw the same on its only move). Polling REST every couple of seconds from every open page would catch those cases sooner. But it would multiply our requests to DraftKings by 20–30×, per viewer, to shave seconds off a minority of moves. Push-first with a 60 s check is the reasonable trade; the knob is `RECHECK_LIVE_MS` in `src/hooks/useOddsStream.ts` if Betstamp wanted to make it differently.
 
 ## Getting the data: what we found
 
@@ -234,7 +234,7 @@ This is mapped to a clean shape (`src/lib/odds/types.ts`): **game → market (mo
 
 ## Running locally
 
-Requires Node 20+.
+Requires Node 20.9+.
 
 ```bash
 git clone https://github.com/Twoos123/draftkings-live-odds.git
@@ -278,7 +278,9 @@ Grafana runs at http://localhost:3001. It opens read-only with no login; use adm
 
 ### Go feed client (optional)
 
-`cmd/dkfeed` is a standalone Go client for the same push feed, for comparison with the Node server. The site doesn't use it. It subscribes to every NFL market, decodes each message into typed structs (`internal/dkfeed`), and logs when the message arrived, how long decoding took, and how long it took to arrive from DraftKings (on DraftKings' clock, as above). On exit it prints parse-time percentiles. It doesn't reconnect: it exits when the connection drops. Needs Go 1.25+.
+`cmd/dkfeed` is a standalone Go client for the same push feed. I wrote it to learn Go, since Betstamp's stack is Go, ClickHouse and Grafana. Speed wasn't the reason: the Node server already handles an update in 27 µs, about 0.01% of the time a move takes to reach your screen (see [Performance](#performance-where-the-milliseconds-go)), so moving the relay to Go wouldn't make the odds any fresher. The site doesn't use it. `internal/dkfeed` is written as a library so it can become the DraftKings adapter in the Go workers described in [Adding a second sportsbook or league](#adding-a-second-sportsbook-or-league).
+
+It subscribes to every NFL market, decodes each message into typed structs (`internal/dkfeed`), and logs when the message arrived, how long decoding took, and how long it took to arrive from DraftKings (on DraftKings' clock, as above). On exit it prints parse-time percentiles. It doesn't reconnect: it exits when the connection drops. Needs Go 1.25+.
 
 ```bash
 go run ./cmd/dkfeed -for 2m     # log each update for two minutes (or until Ctrl+C)
@@ -334,12 +336,20 @@ internal/dkfeed/       Its library: connection + subscription, typed frames, dec
 
 ## Adding a second sportsbook or league
 
-**A second league** is mostly configuration. League id `88808` and subcategory `4518` live in `src/lib/dk/config.ts`. Other leagues use the same endpoints with different ids, though soccer adds a draw side, so `Side` would gain one.
+**A second league** is mostly configuration. League id `88808` and subcategory `4518` live in `src/lib/dk/config.ts` (and in the Go client's `Config.Query`). Other leagues use the same endpoints with different ids, though soccer adds a draw side, so `Side` would gain one. With the workers below, a new league is one more subscription in the DraftKings worker.
 
-**A second sportsbook** needs a new adapter. Everything DraftKings-specific is in `src/lib/dk/`; everything below it (clean types, `BoardEngine`, diffing, moves, SSE, UI, ClickHouse) doesn't know which book it's looking at.
-1. Define a `BookAdapter` interface (`snapshot()`, `subscribe(onDelta)`, `normalize()`) and move today's DK code behind it.
-2. Add a `book` field to games and ticks. Match the same game across books with a canonical id (league + teams + kickoff) instead of each book's event id.
-3. Move ingestion out of the web tier into **always-on workers**, one per book/league, publishing to Redis and writing to ClickHouse. Run them on hosts each book's endpoints accept, and the Vercel app just fans out. That also gives every book a server-side board and full history, not only while someone is watching.
+**A second sportsbook** is where I'd move ingestion to Go, ClickHouse and Grafana. Today one Next.js app does everything, which suits one book and one league but not many:
+
+```
+DraftKings feed ─► Go worker (DK adapter) ─┐
+FanDuel feed    ─► Go worker (FD adapter) ─┼─► Redis pub/sub ─► Vercel: SSE fan-out ─► browsers
+…                                          └─► ClickHouse (every tick, every book) ─► Grafana
+```
+
+1. **One always-on Go worker per book.** Each worker holds that book's connections and reconnects, plus an adapter (`Snapshot`, `Subscribe`, `Normalize`) that maps its raw messages to the clean model: game, market, side, line, odds. `internal/dkfeed` already covers the DraftKings adapter's transport: connection, subscription, typed frames and latency on DraftKings' clock. Go suits long-running feed workers: a goroutine per feed is cheap, and each worker ships as one static binary. Workers run on hosts each book's endpoints accept, which also gives every book a server-side board.
+2. **A book-agnostic model.** Add a `book` field to games and ticks, and match the same game across books with a canonical id (league + teams + kickoff) instead of each book's event id. Everything in `src/lib/odds/` (clean types, `BoardEngine`, diffing, moves) already doesn't know which book it's looking at.
+3. **ClickHouse as the record.** Workers write every tick from every book, with the book's timestamp and ours, around the clock rather than only while someone is watching. Cross-book questions become single queries: which book moved first, and how far behind the others were. The Grafana dashboard gains a `book` variable for latency, moves and missed moves per book.
+4. **The web tier only fans out.** Vercel keeps serving the page and relays from Redis instead of holding book connections, so adding a book doesn't touch the site.
 
 **Where AI and tooling help it scale:**
 - **Finding and mapping feeds.** The slow part of adding a book is what was done here by hand: watching the Network tab, reading the client JS for the protocol, and working out the delta semantics. An agent with a browser can capture a HAR, propose endpoints and a draft adapter plus schema, and turn captured traffic into test fixtures the way `test/fixtures/` works here.

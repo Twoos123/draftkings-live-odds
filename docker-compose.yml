@@ -2,9 +2,10 @@
 #   docker compose up -d
 #   then run the app with CLICKHOUSE_URL=http://localhost:8123 CLICKHOUSE_PASSWORD=odds
 #   Grafana: http://localhost:3001 (opens read-only; admin / admin to edit)
+# Versions are pinned to the ones the dashboard was built and tested with.
 services:
   clickhouse:
-    image: clickhouse/clickhouse-server:latest
+    image: clickhouse/clickhouse-server:26.9
     ports:
       - "8123:8123"
     environment:
@@ -20,11 +21,11 @@ services:
         hard: 262144
 
   grafana:
-    image: grafana/grafana:latest
+    image: grafana/grafana:13.2.2
     ports:
       - "3001:3000"
     environment:
-      GF_INSTALL_PLUGINS: grafana-clickhouse-datasource
+      GF_PLUGINS_PREINSTALL_SYNC: grafana-clickhouse-datasource@4.21.3
       GF_SECURITY_ADMIN_PASSWORD: admin
       # Local only: open the dashboard read-only without logging in.
       GF_AUTH_ANONYMOUS_ENABLED: "true"
