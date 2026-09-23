@@ -5,7 +5,7 @@ import { useNow } from "@/hooks/useNow";
 import { useRecordedChanges } from "@/hooks/useRecordedChanges";
 import { formatPrice, type OddsFormat } from "@/lib/odds/format";
 import { formatAgo, formatWhen } from "@/lib/odds/freshness";
-import { direction, mergeMoves, placeChanges, type LineMove } from "@/lib/odds/history";
+import { direction, marketIds, mergeMoves, placeChanges, type LineMove } from "@/lib/odds/history";
 import type { Game, MarketType } from "@/lib/odds/types";
 
 const MARKET_LABEL: Record<MarketType, string> = { moneyline: "Moneyline", spread: "Spread", total: "Total" };
@@ -46,7 +46,7 @@ export function LatestMoves({
   historyOn: boolean;
 }) {
   // Earlier moves are fetched once, for the board as it first loaded; from then on the live feed adds them as they happen.
-  const [boardMarkets] = useState(() => [...games.values()].flatMap((g) => Object.values(g.markets).map((m) => m!.id)).sort());
+  const [boardMarkets] = useState(() => marketIds(games.values()).sort());
   const recorded = useRecordedChanges(historyOn ? boardMarkets : null, `moves&limit=${MAX_SHOWN * 4}`);
   const moves = useMemo(
     () =>

@@ -10,11 +10,12 @@ import { getHub } from "@/lib/server";
 export async function POST() {
   if (process.env.NODE_ENV === "production") return new Response("Not found", { status: 404 });
   const hub = getHub();
-  const candidates = hub.games().filter((g) => g.markets.moneyline && !g.markets.moneyline.suspended);
+  const candidates = hub.games().filter((g) => g.markets.moneyline?.selections.length && !g.markets.moneyline.suspended);
   const game = candidates[Math.floor(Math.random() * candidates.length)];
   if (!game) return Response.json({ error: "no board yet; open the page first" }, { status: 409 });
 
-  const sel = game.markets.moneyline!.selections[Math.floor(Math.random() * 2)];
+  const sides = game.markets.moneyline!.selections;
+  const sel = sides[Math.floor(Math.random() * sides.length)];
   let american = sel.american + (Math.random() < 0.5 ? -10 : 10);
   if (Math.abs(american) < 100) american = american > 0 ? -110 : 110;
   const decimal = Math.round(americanToDecimal(american) * 100) / 100;

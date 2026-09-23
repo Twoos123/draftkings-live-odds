@@ -5,7 +5,7 @@ import { useNow } from "@/hooks/useNow";
 import { useRecordedChanges } from "@/hooks/useRecordedChanges";
 import { formatPrice, type OddsFormat } from "@/lib/odds/format";
 import { formatWhen } from "@/lib/odds/freshness";
-import { direction, mergeMoves, placeChanges, type LineMove } from "@/lib/odds/history";
+import { direction, marketIds, mergeMoves, placeChanges, type LineMove } from "@/lib/odds/history";
 import type { Game, MarketType } from "@/lib/odds/types";
 
 const MARKETS: [MarketType, string][] = [
@@ -66,8 +66,8 @@ function MarketMoves({ game, label, moves, format, now }: { game: Game; label: s
  */
 export function GameHistory({ game, format }: { game: Game; format: OddsFormat }) {
   // Fetched once when opened; moves after that arrive through the live feed.
-  const [marketIds] = useState(() => Object.values(game.markets).map((m) => m!.id));
-  const recorded = useRecordedChanges(marketIds);
+  const [markets] = useState(() => marketIds([game]));
+  const recorded = useRecordedChanges(markets);
   const moveLog = useContext(MoveLogContext);
   const now = useNow(30_000);
   const moves = useMemo(

@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { DkSnapshot } from "@/lib/dk/schema";
 import { BoardEngine, type BoardChange } from "@/lib/odds/engine";
-import { deltaOf, loadSnapshot, odds } from "./helpers";
+import { deltaOf, loadSnapshot, loadWsFrames, odds, parseUpdate } from "./helpers";
 
 // BoardEngine runs in the browser (and on the server where DK's REST board is reachable).
 
@@ -67,6 +67,59 @@ describe("BoardEngine", () => {
     await engine.resync();
     expect(last("update").moves).toEqual([expect.objectContaining({ source: "resync", to: expect.objectContaining({ american: 300 }) })]);
     expect(engine.counters.resyncCorrections).toBe(1);
+  });
+
+  it("reports a line move that DraftKings sends as removes, then adds, in separate updates", async () => {
+    // Real frames: the TEN Titans @ NY Giants total went 40.5 -> 39.5. DK removed the old Over,
+    // then the old Under, then added the new Over and Under, each in its own update, so for a
+    // moment the game had no total at all.
+    const { engine, changes } = setup();
+    await engine.resync();
+    for (const raw of loadWsFrames().filter((f) => f.includes("84695545"))) {
+      const { delta, meta } = parseUpdate(raw);
+      engine.apply(delta, meta, Date.now());
+    }
+    const moves = changes.flatMap((c) => (c.type === "update" ? c.moves : []));
+    expect(moves.filter((m) => m.market === "total")).toEqual([
+      { gameId: "34118112", market: "total", side: "over", selectionId: "0OU84695545O3950_1", source: "ws", from: { line: 40.5, american: -108, decimal: 1.92 }, to: { line: 39.5, american: -115, decimal: 1.86 } },
+      { gameId: "34118112", market: "total", side: "under", selectionId: "0OU84695545U3950_3", source: "ws", from: { line: 40.5, american: -112, decimal: 1.89 }, to: { line: 39.5, american: -105, decimal: 1.95 } },
+    ]);
+    expect(engine.counters.moves).toBe(4); // and the moneyline moved in the same burst
+    expect(engine.games().find((g) => g.id === "34118112")!.markets.total!.selections).toMatchObject([
+      { side: "over", line: 39.5, prev: { line: 40.5, american: -108 } },
+      { side: "under", line: 39.5, prev: { line: 40.5, american: -112 } },
+    ]);
+  });
+
+  it("keeps a market on the board, without prices, while DraftKings swaps its line", async () => {
+    // Same real frames. DK removes the old sides but keeps the market; line history asks for markets by id.
+    const { engine } = setup();
+    await engine.resync();
+    const seen: string[] = [];
+    for (const raw of loadWsFrames().filter((f) => f.includes("84695545"))) {
+      const { delta, meta } = parseUpdate(raw);
+      engine.apply(delta, meta, Date.now());
+      const total = engine.games().find((g) => g.id === "34118112")!.markets.total;
+      const state = `${total?.id}: ${total?.selections.map((s) => `${s.side} ${s.line}`).join(", ")}`;
+      if (seen.at(-1) !== state) seen.push(state);
+    }
+    expect(seen).toEqual([
+      "3_84695545: over 40.5, under 40.5",
+      "3_84695545: under 40.5",
+      "3_84695545: ",
+      "3_84695545: over 39.5",
+      "3_84695545: over 39.5, under 39.5",
+    ]);
+  });
+
+  it("doesn't report a side that DraftKings drops and puts back at the same price", async () => {
+    const { engine, changes } = setup();
+    await engine.resync();
+    const over = structuredClone(loadSnapshot().selections.find((s) => s.id === "0OU84695545O4050_1")!);
+    engine.apply(deltaOf((d) => d.remove.selections.push(over.id)), meta(), Date.now());
+    engine.apply(deltaOf((d) => d.add.selections.push(over)), meta(), Date.now());
+    expect(changes.filter((c) => c.type === "update")).toHaveLength(2);
+    expect(engine.counters.moves).toBe(0);
   });
 
   it("re-checks when an update references something it doesn't know", async () => {

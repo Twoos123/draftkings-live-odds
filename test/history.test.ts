@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { boardSides, PriceTracker } from "@/lib/dk/prices";
-import { lineMoves, mergeMoves, placeChanges } from "@/lib/odds/history";
+import { lineMoves, marketIds, mergeMoves, placeChanges } from "@/lib/odds/history";
 import { normalizeGames } from "@/lib/odds/normalize";
 import { DkStore } from "@/lib/odds/store";
 import type { RecordedChange } from "@/lib/odds/types";
@@ -131,6 +131,16 @@ describe("placing recorded changes on the board", () => {
       { gameId: GAME, market: "moneyline", side: "away" },
       { gameId: GAME, market: "total", side: "under" },
     ]);
+  });
+
+  it("still asks about and places a market while DraftKings swaps its line", () => {
+    // Mid swap: DK has removed the old Over and Under, and not yet added the new ones.
+    const store = DkStore.fromSnapshot(loadSnapshot());
+    store.apply(deltaOf((d) => d.remove.selections.push(OVER, "0OU84695613U4450_3")));
+    const games = normalizeGames(store);
+    expect(marketIds([games.get(GAME)!])).toContain("3_84695613");
+    const moves = placeChanges(games.values(), [change({ marketId: "3_84695613", label: "Over", selectionId: OVER })]);
+    expect(moves.map(({ gameId, market, side }) => ({ gameId, market, side }))).toEqual([{ gameId: GAME, market: "total", side: "over" }]);
   });
 
   it("drops changes for markets that are no longer on the board", () => {

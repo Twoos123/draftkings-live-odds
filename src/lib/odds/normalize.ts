@@ -66,7 +66,7 @@ function normalizeMarket(store: DkStore, m: DkMarket): Market | null {
     // If DK ever sends more than one line per side, prefer the main line.
     if (!existing || (candidate.main && !existing.main)) bySide.set(side, candidate);
   }
-  if (bySide.size === 0) return null;
+  // No priced sides is kept: DK can remove a market's old line an update or two before adding the new one.
   const selections: Selection[] = [...bySide.values()]
     .sort((a, b) => SIDE_ORDER[a.side] - SIDE_ORDER[b.side])
     .map((c) => ({ id: c.id, side: c.side, label: c.label, line: c.line, american: c.american, decimal: c.decimal }));
@@ -83,7 +83,8 @@ export function normalizeGame(store: DkStore, eventId: string): Game | null {
   const markets: Game["markets"] = {};
   for (const m of store.marketsOf(eventId)) {
     const market = normalizeMarket(store, m);
-    if (market && !markets[market.type]) markets[market.type] = market;
+    const existing = market && markets[market.type];
+    if (market && (!existing || (!existing.selections.length && market.selections.length))) markets[market.type] = market;
   }
   return {
     id: e.id,
@@ -120,12 +121,12 @@ export interface GamesDiff {
   moves: PriceMove[];
 }
 
-function priceMoves(before: Game, after: Game): PriceMove[] {
+function priceMoves(before: Game, after: Game, lastPrices?: ReadonlyMap<string, Price>): PriceMove[] {
   const moves: PriceMove[] = [];
   for (const type of ["moneyline", "spread", "total"] as const) {
     const oldSels = before.markets[type]?.selections ?? [];
     for (const sel of after.markets[type]?.selections ?? []) {
-      const old = oldSels.find((s) => s.side === sel.side);
+      const old = oldSels.find((s) => s.side === sel.side) ?? lastPrices?.get(sideKey(after.id, type, sel.side));
       if (!old || (old.american === sel.american && old.line === sel.line)) continue;
       moves.push({
         gameId: after.id,
@@ -140,12 +141,20 @@ function priceMoves(before: Game, after: Game): PriceMove[] {
   return moves;
 }
 
-/**
- * What changed between two versions of the board. Line or price changes are
- * "moves". Pass `ids` to compare only those games (the ones an update touched);
- * otherwise every game in either board is compared.
- */
-export function diffGames(prev: Map<string, Game>, next: Map<string, Game>, ids?: Iterable<string>): GamesDiff {
+export interface DiffOptions {
+  /** Compare only these games (the ones an update touched); otherwise every game in either board. */
+  ids?: Iterable<string>;
+  /**
+   * Each side's last known price, by sideKey, for sides missing from `prev`.
+   * DraftKings can send a line move as "remove the old line", then "add the
+   * new one" in a later update, so the new line arrives with nothing in
+   * `prev` to compare it with.
+   */
+  lastPrices?: ReadonlyMap<string, Price>;
+}
+
+/** What changed between two versions of the board. Line or price changes are "moves". */
+export function diffGames(prev: Map<string, Game>, next: Map<string, Game>, { ids, lastPrices }: DiffOptions = {}): GamesDiff {
   const changed: string[] = [];
   const removed: string[] = [];
   const moves: PriceMove[] = [];
@@ -162,7 +171,7 @@ export function diffGames(prev: Map<string, Game>, next: Map<string, Game>, ids?
     }
     if (JSON.stringify(before) === JSON.stringify(after)) continue;
     changed.push(id);
-    moves.push(...priceMoves(before, after));
+    moves.push(...priceMoves(before, after, lastPrices));
   }
   return { changed, removed, moves };
 }

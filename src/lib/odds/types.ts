@@ -27,7 +27,11 @@ export interface Market {
   id: string;
   type: MarketType;
   suspended: boolean;
-  /** [away, home] for moneyline/spread, [over, under] for totals. */
+  /**
+   * [away, home] for moneyline/spread, [over, under] for totals: the sides
+   * with a price right now. Can be short or empty for a moment while
+   * DraftKings swaps a line (it removes the old one before adding the new).
+   */
   selections: Selection[];
 }
 

@@ -43,6 +43,8 @@ export class BoardEngine {
   /** Normalized board, without prev/changedAt decoration. Diffed on every change. */
   private board = new Map<string, Game>();
   private history = new Map<string, { prev: Price; changedAt: string }>();
+  /** Each side's latest price, by sideKey, kept while the side is off the board (see DiffOptions). */
+  private lastPrices = new Map<string, Price>();
   private recent: { at: number; delta: DkDelta }[] = [];
   private resyncBuffer: DkDelta[] | null = null;
   private resyncPromise: Promise<boolean> | null = null;
@@ -132,11 +134,18 @@ export class BoardEngine {
         if (game) this.board.set(id, game);
         else this.board.delete(id);
       }
-      diff = diffGames(before, this.board, touched);
+      diff = diffGames(before, this.board, { ids: touched, lastPrices: this.lastPrices });
     } else {
       const rebuilt = normalizeGames(this.store);
-      diff = diffGames(this.board, rebuilt);
+      diff = diffGames(this.board, rebuilt, { lastPrices: this.lastPrices });
       this.board = rebuilt;
+    }
+    for (const id of touched ?? this.board.keys()) {
+      const game = this.board.get(id);
+      if (!game) continue;
+      for (const m of Object.values(game.markets)) {
+        for (const s of m!.selections) this.lastPrices.set(sideKey(id, m!.type, s.side), s);
+      }
     }
 
     if (source === "snapshot") {
@@ -149,7 +158,9 @@ export class BoardEngine {
     const changedAt = meta?.createdTime ?? (this.opts.toIso ?? ((t: number) => new Date(t).toISOString()))(receivedAt);
     for (const m of moves) this.history.set(sideKey(m.gameId, m.market, m.side), { prev: m.from, changedAt });
     for (const id of diff.removed) {
-      for (const key of this.history.keys()) if (key.startsWith(`${id}:`)) this.history.delete(key);
+      for (const map of [this.history, this.lastPrices]) {
+        for (const key of map.keys()) if (key.startsWith(`${id}:`)) map.delete(key);
+      }
     }
     if (source === "ws") this.counters.moves += moves.length;
     else this.counters.resyncCorrections += moves.length;

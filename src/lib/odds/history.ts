@@ -31,6 +31,11 @@ function sideOf(game: Game, market: Market, label: string): Side | null {
   return label === game.away.name ? "away" : label === game.home.name ? "home" : null;
 }
 
+/** The DraftKings markets on the board, to ask /api/history about. */
+export function marketIds(games: Iterable<Game>): string[] {
+  return [...games].flatMap((g) => Object.values(g.markets).map((m) => m!.id));
+}
+
 /** Recorded changes placed on the board. Changes for markets no longer on it are dropped. */
 export function placeChanges(games: Iterable<Game>, changes: RecordedChange[]): LineMove[] {
   const markets = new Map<string, { game: Game; market: Market }>();
