@@ -181,7 +181,7 @@ The other milliseconds worth chasing were outside the per-update path:
 - **Shorter worst case.** If DraftKings' push feed drops, the browser re-checks the board every 5 s (was 10 s) until it's back.
 - **Honest attribution.** The latency badge shows the total *and* "our part" (DraftKings' socket → our server → you, typically ~50 ms). Feed details separates out time spent inside DraftKings before it publishes a change. That's usually ~20 ms, but we've watched it sit at ~3 s for minutes at a time, which would otherwise look like our lag.
 
-**Deliberately not done: racing the REST board against the push feed.** In the audit above, DraftKings' REST board showed 2 of the 13 moves before the push feed did, because DraftKings held those pushes for ~2 s (an earlier audit saw the same on its only move). Polling REST every couple of seconds from every open page would catch those cases sooner. But it would multiply our requests to DraftKings by 20–30×, per viewer, to shave seconds off a minority of moves. Push-first with a 60 s check is the reasonable trade; the knob is `RECHECK_LIVE_MS` in `src/hooks/useOddsStream.ts` if Betstamp wanted to make it differently.
+**Deliberately not done: racing the REST board against the push feed.** In the audit above, DraftKings' REST board showed 2 of the 13 moves before the push feed did, because DraftKings held those pushes for ~2 s (an earlier audit saw the same on its only move). Polling REST every couple of seconds from every open page would catch those cases sooner. But it would multiply our requests to DraftKings by 20–30×, per viewer, to shave seconds off a minority of moves. Push-first with a 60 s check is the reasonable trade; the knob is `RECHECK_LIVE_MS` in `src/hooks/useOddsStream.ts` if we wanted to make it differently.
 
 ## Getting the data: what we found
 
@@ -266,7 +266,7 @@ To see the move highlight without waiting for DraftKings, run `curl -X POST loca
 
 ### ClickHouse + Grafana (optional)
 
-Local analytics built around Betstamp's stack, and the store for [line history](#line-history). Needs Docker. For the live site, use ClickHouse Cloud (see [Deploying](#deploying)).
+Local analytics built around the stack, and the store for [line history](#line-history). Needs Docker. For the live site, use ClickHouse Cloud (see [Deploying](#deploying)).
 
 ```bash
 docker compose up -d
@@ -292,7 +292,7 @@ Grafana runs at http://localhost:3001. It opens read-only with no login; use adm
 
 ### Go feed client (optional)
 
-`cmd/dkfeed` is a standalone Go client for the same push feed. I wrote it to learn Go, since Betstamp's stack is Go, ClickHouse and Grafana. Speed wasn't the reason: the Node server already handles an update in 27 µs, about 0.01% of the time a move takes to reach your screen (see [Performance](#performance-where-the-milliseconds-go)), so moving the relay to Go wouldn't make the odds any fresher. The site doesn't use it. `internal/dkfeed` is written as a library so it can become the DraftKings adapter in the Go workers described in [Adding a second sportsbook or league](#adding-a-second-sportsbook-or-league).
+`cmd/dkfeed` is a standalone Go client for the same push feed. I wrote it to learn Go, since the stack is Go, ClickHouse and Grafana. Speed wasn't the reason: the Node server already handles an update in 27 µs, about 0.01% of the time a move takes to reach your screen (see [Performance](#performance-where-the-milliseconds-go)), so moving the relay to Go wouldn't make the odds any fresher. The site doesn't use it. `internal/dkfeed` is written as a library so it can become the DraftKings adapter in the Go workers described in [Adding a second sportsbook or league](#adding-a-second-sportsbook-or-league).
 
 It subscribes to every NFL market, decodes each message into typed structs (`internal/dkfeed`), and logs when the message arrived, how long decoding took, and how long it took to arrive from DraftKings (on DraftKings' clock, as above). On exit it prints parse-time percentiles. It doesn't reconnect: it exits when the connection drops. Needs Go 1.25+.
 
