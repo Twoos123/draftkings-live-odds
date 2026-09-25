@@ -4,6 +4,10 @@
 .claude
 .next
 node_modules
+# Playwright output from local runs.
+/test-results
+/playwright-report
+/blob-report
 # Go feed client: local tooling, not part of the site.
 /go.mod
 /go.sum
