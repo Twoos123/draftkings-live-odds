@@ -1,14 +1,30 @@
 import type { DkEvent, DkMarket, DkSelection } from "../dk/schema";
 import { americanToDecimal, decimalToAmerican, parseAmerican } from "./format";
 import type { DkStore } from "./store";
-import type { Game, Market, MarketType, Move, MoveSource, Price, PriceMove, Selection, Side, Team } from "./types";
+import { PERIODS, type Game, type Market, type MarketType, type Move, type MoveSource, type Period, type Price, type PriceMove, type Selection, type Side, type Team } from "./types";
 
-const MARKET_TYPES: Record<string, MarketType> = { moneyline: "moneyline", spread: "spread", total: "total" };
+const MARKET_ORDER: readonly MarketType[] = ["moneyline", "spread", "total"];
+/** DK's market type names ("Spread", "Spread 1st Half"), lowercased. Anything else isn't on the board. */
+const MARKET_KINDS: Record<string, [Period, MarketType]> = Object.fromEntries(
+  MARKET_ORDER.flatMap((type) => [
+    [type, ["full", type]],
+    [`${type} 1st half`, ["half", type]],
+  ]),
+);
 const SIDE_ORDER: Record<Side, number> = { away: 0, over: 0, home: 1, under: 1 };
 
-function marketTypeOf(m: DkMarket): MarketType | null {
+function marketKindOf(m: DkMarket): [Period, MarketType] | null {
   const name = (m.marketType?.name ?? m.name ?? "").trim().toLowerCase();
-  return MARKET_TYPES[name] ?? null;
+  return MARKET_KINDS[name] ?? null;
+}
+
+export function emptyMarkets(): Game["markets"] {
+  return { full: {}, half: {} };
+}
+
+/** Every market on a game, full game then 1st half. */
+export function allMarkets(game: Game): Market[] {
+  return PERIODS.flatMap((p) => MARKET_ORDER.flatMap((t) => game.markets[p][t] ?? []));
 }
 
 function sideOf(s: DkSelection): Side | null {
@@ -54,8 +70,9 @@ function team(e: DkEvent, role: "Home" | "Away"): Team | null {
 }
 
 function normalizeMarket(store: DkStore, m: DkMarket): Market | null {
-  const type = marketTypeOf(m);
-  if (!type) return null;
+  const kind = marketKindOf(m);
+  if (!kind) return null;
+  const [period, type] = kind;
   const bySide = new Map<Side, Selection & { main: boolean }>();
   for (const s of store.selectionsOf(m.id)) {
     const side = sideOf(s);
@@ -70,7 +87,7 @@ function normalizeMarket(store: DkStore, m: DkMarket): Market | null {
   const selections: Selection[] = [...bySide.values()]
     .sort((a, b) => SIDE_ORDER[a.side] - SIDE_ORDER[b.side])
     .map((c) => ({ id: c.id, side: c.side, label: c.label, line: c.line, american: c.american, decimal: c.decimal }));
-  return { id: m.id, type, suspended: m.isSuspended ?? false, selections };
+  return { id: m.id, type, period, suspended: m.isSuspended ?? false, selections };
 }
 
 /** One game from DK's entity graph. Cost depends on this game only, not the board size. */
@@ -80,11 +97,19 @@ export function normalizeGame(store: DkStore, eventId: string): Game | null {
   const away = team(e, "Away");
   const home = team(e, "Home");
   if (!away || !home || !e.startEventDate) return null;
-  const markets: Game["markets"] = {};
+  const found = emptyMarkets();
   for (const m of store.marketsOf(eventId)) {
     const market = normalizeMarket(store, m);
-    const existing = market && markets[market.type];
-    if (market && (!existing || (!existing.selections.length && market.selections.length))) markets[market.type] = market;
+    const existing = market && found[market.period][market.type];
+    if (market && (!existing || (!existing.selections.length && market.selections.length))) found[market.period][market.type] = market;
+  }
+  // Same key order however the markets arrived, so diffGames' JSON compare sees no false changes.
+  const markets = emptyMarkets();
+  for (const p of PERIODS) {
+    for (const t of MARKET_ORDER) {
+      const m = found[p][t];
+      if (m) markets[p][t] = m;
+    }
   }
   return {
     id: e.id,
@@ -111,8 +136,8 @@ export function sortGames(games: Iterable<Game>): Game[] {
   return [...games].sort((a, b) => a.startTime.localeCompare(b.startTime) || a.name.localeCompare(b.name));
 }
 
-export function sideKey(gameId: string, market: MarketType, side: Side): string {
-  return `${gameId}:${market}:${side}`;
+export function sideKey(gameId: string, period: Period, market: MarketType, side: Side): string {
+  return `${gameId}:${period}:${market}:${side}`;
 }
 
 export interface GamesDiff {
@@ -123,19 +148,22 @@ export interface GamesDiff {
 
 function priceMoves(before: Game, after: Game, lastPrices?: ReadonlyMap<string, Price>): PriceMove[] {
   const moves: PriceMove[] = [];
-  for (const type of ["moneyline", "spread", "total"] as const) {
-    const oldSels = before.markets[type]?.selections ?? [];
-    for (const sel of after.markets[type]?.selections ?? []) {
-      const old = oldSels.find((s) => s.side === sel.side) ?? lastPrices?.get(sideKey(after.id, type, sel.side));
-      if (!old || (old.american === sel.american && old.line === sel.line)) continue;
-      moves.push({
-        gameId: after.id,
-        market: type,
-        side: sel.side,
-        selectionId: sel.id,
-        from: { line: old.line, american: old.american, decimal: old.decimal },
-        to: { line: sel.line, american: sel.american, decimal: sel.decimal },
-      });
+  for (const period of PERIODS) {
+    for (const type of MARKET_ORDER) {
+      const oldSels = before.markets[period][type]?.selections ?? [];
+      for (const sel of after.markets[period][type]?.selections ?? []) {
+        const old = oldSels.find((s) => s.side === sel.side) ?? lastPrices?.get(sideKey(after.id, period, type, sel.side));
+        if (!old || (old.american === sel.american && old.line === sel.line)) continue;
+        moves.push({
+          gameId: after.id,
+          period,
+          market: type,
+          side: sel.side,
+          selectionId: sel.id,
+          from: { line: old.line, american: old.american, decimal: old.decimal },
+          to: { line: sel.line, american: sel.american, decimal: sel.decimal },
+        });
+      }
     }
   }
   return moves;

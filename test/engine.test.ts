@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { DkSnapshot } from "@/lib/dk/schema";
 import { BoardEngine, type BoardChange } from "@/lib/odds/engine";
-import { deltaOf, loadSnapshot, loadWsFrames, odds, parseUpdate } from "./helpers";
+import type { Game, Period } from "@/lib/odds/types";
+import { deltaOf, loadBoardSnapshot, loadHalfSnapshot, loadSnapshot, loadWsFrames, odds, parseUpdate } from "./helpers";
 
 // BoardEngine runs in the browser (and on the server where DK's REST board is reachable).
 
@@ -10,8 +11,7 @@ const priceChange = (american: number) =>
   deltaOf((d) => d.change.selections.push({ id: "0ML84695613_3", displayOdds: odds(american, 1 + american / 100) }));
 const meta = () => ({ createdTime: new Date(Date.now() - 80).toISOString(), publishedTime: null, wsPublishedTime: null });
 
-function setup(fetchSnapshot?: () => Promise<DkSnapshot>) {
-  const base = loadSnapshot();
+function setup(fetchSnapshot?: () => Promise<DkSnapshot>, base = loadSnapshot()) {
   const fetch = vi.fn(fetchSnapshot ?? (async () => structuredClone(base)));
   const changes: BoardChange[] = [];
   const engine = new BoardEngine({ fetchSnapshot: fetch, onChange: (c) => changes.push(c), now: () => Date.now() });
@@ -19,8 +19,7 @@ function setup(fetchSnapshot?: () => Promise<DkSnapshot>) {
   return { engine, fetch, changes, last };
 }
 
-const awayMoneyline = (games: { id: string; markets: { moneyline?: { selections: { american: number }[] } } }[]) =>
-  games.find((g) => g.id === GAME)!.markets.moneyline!.selections[0];
+const awayMoneyline = (games: Game[], id = GAME, period: Period = "full") => games.find((g) => g.id === id)!.markets[period].moneyline!.selections[0];
 
 beforeEach(() => vi.useRealTimers());
 
@@ -81,11 +80,11 @@ describe("BoardEngine", () => {
     }
     const moves = changes.flatMap((c) => (c.type === "update" ? c.moves : []));
     expect(moves.filter((m) => m.market === "total")).toEqual([
-      { gameId: "34118112", market: "total", side: "over", selectionId: "0OU84695545O3950_1", source: "ws", from: { line: 40.5, american: -108, decimal: 1.92 }, to: { line: 39.5, american: -115, decimal: 1.86 } },
-      { gameId: "34118112", market: "total", side: "under", selectionId: "0OU84695545U3950_3", source: "ws", from: { line: 40.5, american: -112, decimal: 1.89 }, to: { line: 39.5, american: -105, decimal: 1.95 } },
+      { gameId: "34118112", period: "full", market: "total", side: "over", selectionId: "0OU84695545O3950_1", source: "ws", from: { line: 40.5, american: -108, decimal: 1.92 }, to: { line: 39.5, american: -115, decimal: 1.86 } },
+      { gameId: "34118112", period: "full", market: "total", side: "under", selectionId: "0OU84695545U3950_3", source: "ws", from: { line: 40.5, american: -112, decimal: 1.89 }, to: { line: 39.5, american: -105, decimal: 1.95 } },
     ]);
     expect(engine.counters.moves).toBe(4); // and the moneyline moved in the same burst
-    expect(engine.games().find((g) => g.id === "34118112")!.markets.total!.selections).toMatchObject([
+    expect(engine.games().find((g) => g.id === "34118112")!.markets.full.total!.selections).toMatchObject([
       { side: "over", line: 39.5, prev: { line: 40.5, american: -108 } },
       { side: "under", line: 39.5, prev: { line: 40.5, american: -112 } },
     ]);
@@ -99,7 +98,7 @@ describe("BoardEngine", () => {
     for (const raw of loadWsFrames().filter((f) => f.includes("84695545"))) {
       const { delta, meta } = parseUpdate(raw);
       engine.apply(delta, meta, Date.now());
-      const total = engine.games().find((g) => g.id === "34118112")!.markets.total;
+      const total = engine.games().find((g) => g.id === "34118112")!.markets.full.total;
       const state = `${total?.id}: ${total?.selections.map((s) => `${s.side} ${s.line}`).join(", ")}`;
       if (seen.at(-1) !== state) seen.push(state);
     }
@@ -146,5 +145,118 @@ describe("BoardEngine", () => {
     await engine.resync();
     expect(engine.snapshotError).toBeNull();
     expect(last("snapshot").games).toHaveLength(32);
+  });
+});
+
+describe("BoardEngine, 1st half", () => {
+  // LA Chargers @ BUF Bills in the fixtures: moneyline LAC +270 for the game, +200 for the 1st half.
+  const HALF_GAME = "34118212";
+  const HALF_MARKETS = ["1_86410040", "2_86410040", "3_86410040"];
+  const game = (games: Game[]) => games.find((g) => g.id === HALF_GAME)!;
+  /** The 1st-half markets and sides for one game, as DraftKings would add them. */
+  const halfLinesPosted = () => {
+    const half = loadHalfSnapshot();
+    const markets = half.markets.filter((m) => m.eventId === HALF_GAME);
+    const ids = new Set(markets.map((m) => m.id));
+    return deltaOf((d) => {
+      d.add.markets.push(...markets);
+      d.add.selections.push(...half.selections.filter((s) => ids.has(s.marketId!)));
+    });
+  };
+
+  it("moves only the 1st half when a 1st-half price changes", async () => {
+    const { engine, last } = setup(undefined, loadBoardSnapshot());
+    await engine.resync();
+    engine.apply(deltaOf((d) => d.change.selections.push({ id: "0ML86410040_3", displayOdds: odds(220, 3.2) })), meta(), Date.now());
+    const update = last("update");
+    expect(update.moves).toEqual([
+      expect.objectContaining({ gameId: HALF_GAME, period: "half", market: "moneyline", side: "away", from: expect.objectContaining({ american: 200 }), to: expect.objectContaining({ american: 220 }) }),
+    ]);
+    expect(awayMoneyline(update.games, HALF_GAME, "half")).toMatchObject({ american: 220, prev: { american: 200 } });
+    const full = awayMoneyline(update.games, HALF_GAME, "full");
+    expect(full.american).toBe(270);
+    expect(full.prev).toBeUndefined();
+  });
+
+  it("keeps a full-game move and a 1st-half move on the same side apart", async () => {
+    const { engine, last } = setup(undefined, loadBoardSnapshot());
+    await engine.resync();
+    engine.apply(
+      deltaOf((d) => d.change.selections.push({ id: "0ML84695645_3", displayOdds: odds(280, 3.8) }, { id: "0ML86410040_3", displayOdds: odds(210, 3.1) })),
+      meta(),
+      Date.now(),
+    );
+    const update = last("update");
+    expect(update.moves.map((m) => [m.period, m.side, m.from.american, m.to.american])).toEqual([
+      ["full", "away", 270, 280],
+      ["half", "away", 200, 210],
+    ]);
+    expect(awayMoneyline(update.games, HALF_GAME, "full")).toMatchObject({ american: 280, prev: { american: 270 } });
+    expect(awayMoneyline(update.games, HALF_GAME, "half")).toMatchObject({ american: 210, prev: { american: 200 } });
+  });
+
+  it("compares a 1st-half line sent as remove-then-add with the 1st half's last price, not the game's", async () => {
+    // LAC 1st-half spread +4.5 −120 (the full-game spread is +7 −108).
+    const { engine, changes } = setup(undefined, loadBoardSnapshot());
+    await engine.resync();
+    engine.apply(deltaOf((d) => d.remove.selections.push("0HC86410040P450_3")), meta(), Date.now());
+    engine.apply(
+      deltaOf((d) =>
+        d.add.selections.push({ id: "0HC86410040P400_3", marketId: "2_86410040", outcomeType: "Away", label: "LA Chargers", points: 4, displayOdds: odds(-110, 1.91), tags: ["MainPointLine"] }),
+      ),
+      meta(),
+      Date.now(),
+    );
+    const moves = changes.flatMap((c) => (c.type === "update" ? c.moves : []));
+    expect(moves).toEqual([
+      expect.objectContaining({ period: "half", market: "spread", side: "away", from: { line: 4.5, american: -120, decimal: 1.83 }, to: { line: 4, american: -110, decimal: 1.91 } }),
+    ]);
+  });
+
+  it("shows 1st-half lines DraftKings posts later straight from the feed, without a re-check", async () => {
+    const { engine, fetch, last } = setup(); // the board before any 1st-half lines were posted
+    await engine.resync();
+    expect(game(engine.games()).markets.half).toEqual({});
+
+    engine.apply(halfLinesPosted(), meta(), Date.now());
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(engine.counters.unresolved).toBe(0);
+    const update = last("update");
+    expect(Object.keys(game(update.games).markets.half)).toEqual(["moneyline", "spread", "total"]);
+    expect(awayMoneyline(update.games, HALF_GAME, "half").american).toBe(200);
+    expect(update.moves).toEqual([]); // new lines, not moves
+  });
+
+  it("replays 1st-half lines that arrive before the board loads", async () => {
+    const { engine, last } = setup();
+    engine.apply(halfLinesPosted(), meta(), Date.now());
+    await engine.resync();
+    expect(awayMoneyline(last("snapshot").games, HALF_GAME, "half").american).toBe(200);
+  });
+
+  it("empties the 1st half, and only the 1st half, when DraftKings takes it down mid-game", async () => {
+    const { engine, last } = setup(undefined, loadBoardSnapshot());
+    await engine.resync();
+    engine.apply(
+      deltaOf((d) => {
+        d.remove.markets.push(...HALF_MARKETS);
+        d.change.events.push({ id: HALF_GAME, status: "STARTED" });
+      }),
+      meta(),
+      Date.now(),
+    );
+    const g = game(last("update").games);
+    expect(g.status).toBe("STARTED");
+    expect(g.markets.half).toEqual({});
+    expect(Object.keys(g.markets.full)).toEqual(["moneyline", "spread", "total"]);
+  });
+
+  it("pauses a 1st-half market without touching the game's", async () => {
+    const { engine, last } = setup(undefined, loadBoardSnapshot());
+    await engine.resync();
+    engine.apply(deltaOf((d) => d.change.markets.push({ id: "1_86410040", isSuspended: true })), meta(), Date.now());
+    const g = game(last("update").games);
+    expect(g.markets.half.moneyline!.suspended).toBe(true);
+    expect(g.markets.full.moneyline!.suspended).toBe(false);
   });
 });

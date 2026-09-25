@@ -1,7 +1,7 @@
 "use client";
 
 import { memo, useEffect, useState } from "react";
-import { formatOdds, formatProbability, formatSpread, type OddsFormat } from "@/lib/odds/format";
+import { formatOdds, formatProbability, formatSpread, PERIOD_LABEL, type OddsFormat } from "@/lib/odds/format";
 import { direction } from "@/lib/odds/history";
 import type { Market, Price, Selection, Side } from "@/lib/odds/types";
 
@@ -87,7 +87,7 @@ function PriceBox({
   const odds = formatOdds(sel, format);
   const priceText = (p: Price) => [lineText(market, p.line, side), formatOdds(p, format)].filter(Boolean).join(" ");
   const title = [
-    `${sel.label} ${priceText(sel)}`,
+    `${market.period === "half" ? `${PERIOD_LABEL.half}: ` : ""}${sel.label} ${priceText(sel)}`,
     `Implied chance: ${formatProbability(sel.american)}`,
     prev && `Was ${priceText(prev)}`,
     market.suspended && "Betting paused by DraftKings",
@@ -107,7 +107,8 @@ function PriceBox({
           {line}
         </div>
       )}
-      <div className={`flex items-center gap-1 ${line ? "text-[12px] text-muted" : "text-[14px] font-semibold"}`}>
+      {/* A moved price is old + new + arrow; on a narrow phone the old one wraps above rather than spilling out. */}
+      <div className={`flex flex-wrap items-center justify-center gap-x-1 ${line ? "text-[12px] text-muted" : "text-[14px] font-semibold"}`}>
         {prevOdds && <s className="text-[11px] font-normal text-muted">{prevOdds}</s>}
         <span className={dir > 0 ? "text-up" : dir < 0 ? "text-down" : line ? "" : "text-foreground"}>{odds}</span>
         {dir !== 0 && (

@@ -1,6 +1,6 @@
 # DraftKings NFL Live Odds
 
-Live NFL moneyline, spread and total odds from DraftKings, on a page that updates itself as lines move.
+Live NFL moneyline, spread and total odds from DraftKings, for the full game or the 1st half, on a page that updates itself as lines move.
 
 - **Live:** https://draftkings-live-odds.vercel.app
 - **Freshness:** on the live site, a line move reaches your screen **about 0.25 s after DraftKings creates it** (median). Occasionally DraftKings itself holds a change for 1–2 s before publishing it, which is the long tail. [Details](#how-fresh-are-the-odds).
@@ -35,8 +35,8 @@ Then open http://localhost:3000. No accounts, keys or configuration are needed. 
                                                       it blocks cloud IPs, not browsers)
 ```
 
-1. **The server holds DraftKings' push feed.** It opens the same WebSocket sportsbook.draftkings.com uses, subscribes to NFL "Game Lines" (moneyline, spread, total), and relays every update to every browser over Server-Sent Events. Each update is encoded once, and the same bytes go to all viewers.
-2. **The browser loads the full board straight from DraftKings.** It uses DraftKings' REST endpoint, which sends `Access-Control-Allow-Origin: *`, so any web page may read it. That's the same split DraftKings' own site uses: board over REST, changes over the socket. [Why it's split this way](#what-we-hit-and-how-we-got-around-it).
+1. **The server holds DraftKings' push feed.** It opens the same WebSocket sportsbook.draftkings.com uses, subscribes to NFL "Game Lines" and "1st Half" (moneyline, spread and total for each), and relays every update to every browser over Server-Sent Events. Each update is encoded once, and the same bytes go to all viewers.
+2. **The browser loads the full board straight from DraftKings.** It uses DraftKings' REST endpoint, which sends `Access-Control-Allow-Origin: *`, so any web page may read it: two requests in parallel, game lines and 1st half ([why two](#1st-half-lines)). That's the same split DraftKings' own site uses: board over REST, changes over the socket. [Why it's split this way](#what-we-hit-and-how-we-got-around-it).
 3. **Deltas become a live board.** The browser runs `BoardEngine`, the same tested code the server uses:
    - It applies each delta to its copy of DraftKings' entities.
    - It rebuilds only the game that changed, diffs it, and records the move and previous price.
@@ -45,7 +45,8 @@ Then open http://localhost:3000. No accounts, keys or configuration are needed. 
 5. **What you see:**
    - Moved prices flash green or red, with the old price crossed out beside the new one for 10 minutes.
    - A **Latest line moves** panel lists recent changes; click one to jump to the game.
-   - A sticky toolbar holds the live status, a "≈0.2 s behind DraftKings" latency badge, team search, American/decimal odds, and **Refresh**, which re-checks every line now.
+   - A sticky toolbar holds the live status, a "≈0.2 s behind DraftKings" latency badge, team search, **Full game / 1st half**, American/decimal odds, and **Refresh**, which re-checks every line now.
+   - **Full game / 1st half** flips the whole page: every price, **Latest line moves** and **Line history**. Games DraftKings hasn't posted 1st-half lines for yet stay listed and say so ("1st-half lines not posted yet"; "No 1st-half lines right now" once the game has started). The choice is remembered per browser, like the odds format. ([Screenshot](docs/screenshot-1st-half.png))
    - **How to read these odds** explains spreads, totals and moneylines.
    - **Line history** under each game lists every recorded move, when [line history](#line-history) is on.
    - Hovering a price shows its implied win probability.
@@ -152,6 +153,8 @@ A delta feed is only useful if you get every delta. `npm run audit` (`scripts/fe
 - The push feed delivered **all 26. Missed: 0.**
 - In 11 of the 13 moves the push board already had the new price when REST first showed it. In the other 2, REST showed it first because DraftKings held the push for ~2 s. So push isn't *always* DK's fastest path, but it never lost anything.
 
+That run predates 1st-half lines; the audit now compares both periods, since it uses the app's own board loading and subscription.
+
 The page runs the same check continuously (resync corrections under **Feed details**), and so does the server's own board where it has one (Grafana).
 
 ## Performance: where the milliseconds go
@@ -187,10 +190,16 @@ The other milliseconds worth chasing were outside the per-update path:
 
 Found with the browser's Network tab on sportsbook.draftkings.com/leagues/football/nfl, then confirmed in DraftKings' client JavaScript:
 
-- **REST board:** `GET https://sportsbook-nash.draftkings.com/sites/US-NJ-SB/api/sportscontent/controldata/league/leagueSubcategory/v1/markets` with OData-style filters for league `88808` (NFL) and subcategory `4518` (Game Lines). It returns the whole board (32 games, 96 markets, 192 selections), CDN-cached for 1 s.
-- **Push feed:** `wss://sportsbook-ws-us-nj.draftkings.com/websocket?format=json`, JSON-RPC `subscribe` with the same filters.
+- **REST board:** `GET https://sportsbook-nash.draftkings.com/sites/US-NJ-SB/api/sportscontent/controldata/league/leagueSubcategory/v1/markets` with OData-style filters for league `88808` (NFL) and one subcategory: `4518` (Game Lines) or `4631` (1st Half). Game lines return the whole board (32 games, 96 markets, 192 selections); the 1st half had 42 markets for the 14 games that weekend. CDN-cached for 1 s.
+- **Push feed:** `wss://sportsbook-ws-us-nj.draftkings.com/websocket?format=json`, JSON-RPC `subscribe` with the same filters, both subcategories in one subscription.
   - The site itself uses `format=msgpack` (binary); `format=json` carries the same messages.
   - Messages arrive ~60 ms after DraftKings publishes them.
+
+### 1st-half lines
+
+- **Their own subcategory, same shape.** DraftKings lists them under `4631` as "Moneyline 1st Half", "Spread 1st Half" and "Total 1st Half": the same sides, main-line tags and odds fields as the game's markets. They're told apart by that name, which partial updates don't repeat, so the store keeps it from the board.
+- **Two REST requests, one subscription.** The REST endpoint takes one subcategory per request (an OR across the two is `HTTP 400`), so the browser fetches both in parallel and merges them. Both are required: if either fails, the last good board stays up, as with any failed re-check, rather than showing a full game with a missing 1st half. An empty 1st half is fine. The push feed accepts both in one subscription, so one socket still carries every change.
+- **Posted late, taken down early.** DraftKings posts 1st-half lines a few days before kickoff (when this was built, Sunday's games had them and Monday's didn't yet) and takes them down during the game. New ones arrive through the push feed as `add`s and appear at once; the 60 s re-check is the backstop.
 
 ### Shape of the data: a delta feed
 
@@ -215,7 +224,7 @@ Details that matter (all covered by tests using real captured messages):
 - **Markets get suspended** (`isSuspended`) around news or kickoff. They're shown greyed out with a lock.
 - **Anything unexpected:** each entity is validated on its own (zod), and bad records are dropped and counted, never fatal. A change that references something unknown triggers a re-check (rate-limited) instead of guessing.
 
-This is mapped to a clean shape (`src/lib/odds/types.ts`): **game → market (moneyline / spread / total) → side (away/home, over/under) → line + odds**, with the previous price and the time of the last move.
+This is mapped to a clean shape (`src/lib/odds/types.ts`): **game → period (full game / 1st half) → market (moneyline / spread / total) → side (away/home, over/under) → line + odds**, with the previous price and the time of the last move.
 
 ## Line history
 
@@ -254,7 +263,8 @@ git clone https://github.com/Twoos123/draftkings-live-odds.git
 cd draftkings-live-odds
 npm install
 npm run dev          # http://localhost:3000
-npm test             # 54 tests, using real captured DraftKings data
+npm test             # 89 unit tests, using real captured DraftKings data
+npm run test:e2e     # browser tests (Playwright), desktop + phone; see below
 npm run typecheck
 npm run build        # production build
 npm run audit        # 15-min check that the push feed misses nothing (see above)
@@ -262,7 +272,9 @@ npm run audit        # 15-min check that the push feed misses nothing (see above
 
 No configuration is needed; see `.env.example` for the optional settings. Locally the server can also reach DraftKings' REST board, so `/api/odds` works too; on Vercel it returns 503 by design (see above).
 
-To see the move highlight without waiting for DraftKings, run `curl -X POST localhost:3000/api/dev/simulate` (development only; 404 in production). It sends a fake moneyline change through the relay, like a real update. The page's next 60 s check puts the real price back and counts a resync correction, which is the self-healing working.
+To see the move highlight without waiting for DraftKings, run `curl -X POST localhost:3000/api/dev/simulate` (development only; 404 in production; add `?period=half` for a 1st-half moneyline). It sends a fake moneyline change through the relay, like a real update. The page's next 60 s check puts the real price back and counts a resync correction, which is the self-healing working.
+
+**Browser tests.** `npm run test:e2e` builds the app, serves it on port 3200 and drives it in Chromium, at desktop size and as a phone (Pixel 7, plus 320–412 px widths). It never reaches DraftKings: the board comes from the recorded fixtures, and a stand-in `EventSource` pushes live updates in the same shape `/api/stream` sends. The tests cover the Full game / 1st half toggle: every game's prices flipping, games without 1st-half lines, remembering the choice (and ignoring a garbage stored value), a live 1st-half move showing in the 1st half only, lines taken down mid-game, line history by period, decimal odds, search, the keyboard, and the phone layout. First run: `npx playwright install chromium` if the browser isn't already on the machine. To test a server you already run: `E2E_BASE_URL=http://localhost:3000 npm run test:e2e`.
 
 ### ClickHouse + Grafana (optional)
 
@@ -286,7 +298,7 @@ Grafana runs at http://localhost:3001. It opens read-only with no login; use adm
 ![Grafana dashboard](docs/grafana.png)
 
 - `price_changes` stores every price change from the push feed, with the price before it when known (see [Line history](#line-history)). Written from any host.
-- `odds_ticks` stores every observed price (`snapshot` baseline, `ws` moves, `resync` corrections) with DraftKings' timestamp and ours. It's a `ReplacingMergeTree`, so several instances recording the same move collapse to one row. It's written from the server's own board, so it needs a host DraftKings' REST endpoint accepts (e.g. local).
+- `odds_ticks` stores every observed price (`snapshot` baseline, `ws` moves, `resync` corrections) with DraftKings' timestamp and ours. `market` is `moneyline` / `spread` / `total` for the full game and `half_moneyline` / `half_spread` / `half_total` for the 1st half, so existing queries on `market = 'moneyline'` still mean the full game. It's a `ReplacingMergeTree`, so several instances recording the same move collapse to one row. It's written from the server's own board, so it needs a host DraftKings' REST endpoint accepts (e.g. local).
 - `feed_latency` stores one row per push message, from any host.
 - The app creates the tables on first use; `clickhouse/schema.sql` has the same DDL.
 
@@ -309,7 +321,7 @@ go test ./...                   # decodes the recorded frames in test/fixtures, 
 | `GET /api/stream` | SSE: `delta` (a DraftKings update, as-is, with DK's timing), `replay` (the last 10 s of deltas, on connect), `status` (every 5 s). |
 | `GET /api/health` | Push-feed status for the instance that answers (`idle` if no one is viewing through it), latency percentiles, counters, and whether the server can reach the REST board itself. |
 | `GET /api/time` | Current time on DraftKings' clock, for the browser's clock correction. |
-| `GET /api/odds` | The server's own copy of the board as JSON. Returns 503 with the reason on Vercel, where DraftKings blocks the server from the REST board. |
+| `GET /api/odds` | The server's own copy of the board as JSON; each game's `markets` is `{ "full": {…}, "half": {…} }`, keyed by moneyline / spread / total (`half` is `{}` when no 1st-half lines are posted). Returns 503 with the reason on Vercel, where DraftKings blocks the server from the REST board. |
 | `GET /api/history?markets=…` | Recorded price changes for DraftKings market ids (e.g. `1_84695613,2_84695613`), oldest first. `&moves` skips changes whose previous price isn't known; `&limit=` keeps the newest (max 2000). `{"enabled": false}` without ClickHouse. |
 | `POST /api/history/board` | A browser's copy of the board, sent when the server asks for one; see [Line history](#line-history). |
 
@@ -333,7 +345,7 @@ Functions run in `iad1` (Washington, D.C.) by default: 7 ms from DraftKings' soc
 2. In the Vercel project, under **Settings → Environment Variables**, add for Production: `CLICKHOUSE_URL` (the service's HTTPS endpoint, `https://….clickhouse.cloud:8443`), `CLICKHOUSE_USER` (`default`) and `CLICKHOUSE_PASSWORD`.
 3. Redeploy. The tables are created on first write.
 
-**Feed details** then shows "Line history (ClickHouse): recording 96 markets". Grafana can point at the same service.
+**Feed details** then shows "Line history (ClickHouse): recording 138 markets" (or however many are posted: 96 for game lines, plus the 1st halves). Grafana can point at the same service.
 
 After deploying, open the site and check **Feed details**:
 - the board says "last checked … ago";
@@ -349,18 +361,20 @@ src/lib/odds/          Book-agnostic: clean types, delta store, BoardEngine (run
                        normalize + diff, formatting, freshness copy, placing recorded moves (history.ts)
 src/lib/hub.ts         Server: push-feed connection, SSE relay, latency, health, optional server board
 src/lib/clickhouse.ts  Optional writer (ticks, price changes, latency) and line-history reader
-src/hooks/             Browser: SSE + BoardEngine + board checks (useOddsStream)
+src/hooks/             Browser: SSE + BoardEngine + board checks (useOddsStream), remembered toggles
 src/app/api/           stream (SSE), health, time, odds, history, dev/simulate
 src/components/        Odds table, price cell, latest moves, line history, feed details
 scripts/feed-audit.ts  Push feed vs REST consistency audit
+scripts/capture-snapshot.ts  Save a DraftKings subcategory as a test fixture
 test/                  Unit tests + real captured DraftKings fixtures
+e2e/                   Browser tests (Playwright), against the fixtures and a stand-in live feed
 cmd/dkfeed/            Optional Go CLI for the push feed (not used by the site)
 internal/dkfeed/       Its library: connection + subscription, typed frames, decoding, latency
 ```
 
 ## Adding a second sportsbook or league
 
-**A second league** is mostly configuration. League id `88808` and subcategory `4518` live in `src/lib/dk/config.ts` (and in the Go client's `Config.Query`). Other leagues use the same endpoints with different ids, though soccer adds a draw side, so `Side` would gain one. With the workers below, a new league is one more subscription in the DraftKings worker.
+**A second league** is mostly configuration. League id `88808` and subcategories `4518` (game lines) and `4631` (1st half) live in `src/lib/dk/config.ts`; the Go client's `Config.Query` filters by league only. Other leagues use the same endpoints with different ids, though soccer adds a draw side, so `Side` would gain one. With the workers below, a new league is one more subscription in the DraftKings worker.
 
 **A second sportsbook** is where I'd move ingestion to Go, ClickHouse and Grafana. Today one Next.js app does everything, which suits one book and one league but not many:
 

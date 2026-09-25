@@ -1,12 +1,31 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseSnapshot, parseWsMessage, type DkDelta, type DkSelection } from "@/lib/dk/schema";
+import { mergeSnapshots } from "@/lib/dk/snapshot";
 
 const fixtures = join(__dirname, "fixtures");
 
-/** Real NFL game-lines snapshot captured from DraftKings (US-NJ). */
+/** Raw fixture JSON, as DraftKings sent it. */
+export function readFixture(name: string): { events: unknown[]; markets: unknown[]; selections: unknown[] } {
+  return JSON.parse(readFileSync(join(fixtures, name), "utf8"));
+}
+
+/** Real NFL game-lines snapshot captured from DraftKings (US-NJ): full game only. */
 export function loadSnapshot() {
-  return parseSnapshot(JSON.parse(readFileSync(join(fixtures, "nfl-snapshot.json"), "utf8")));
+  return parseSnapshot(readFixture("nfl-snapshot.json"));
+}
+
+/**
+ * Real NFL "1st Half" snapshot (subcategory 4631), captured the same week: 14
+ * of those games, the Sunday ones. The rest had no 1st-half lines posted yet.
+ */
+export function loadHalfSnapshot() {
+  return parseSnapshot(readFixture("nfl-1h-snapshot.json"));
+}
+
+/** The whole board as fetchSnapshot returns it: full game and 1st half merged. */
+export function loadBoardSnapshot() {
+  return mergeSnapshots(loadSnapshot(), loadHalfSnapshot());
 }
 
 /** Real push-feed frames recorded from DraftKings. */

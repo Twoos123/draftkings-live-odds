@@ -1,7 +1,16 @@
 import type { ClickHouseClient } from "@clickhouse/client";
 import type { ObservedChange } from "./dk/prices";
 import type { DkUpdateMeta } from "./dk/schema";
-import type { FromSource, Game, Move, RecordedChange } from "./odds/types";
+import { allMarkets } from "./odds/normalize";
+import type { FromSource, Game, MarketType, Move, Period, RecordedChange } from "./odds/types";
+
+/**
+ * odds_ticks.market: "moneyline" for the full game (as it always was, so
+ * existing queries keep meaning the full game), "half_moneyline" for the 1st half.
+ */
+export function tickMarket(period: Period, type: MarketType): string {
+  return period === "full" ? type : `${period}_${type}`;
+}
 
 /** Where every price we see gets recorded, for Grafana and line history. Optional: the app runs without it. */
 export interface TickSink {
@@ -140,9 +149,9 @@ class ClickHouseSink implements TickSink {
   recordBoard(games: Iterable<Game>, observedAt: number) {
     const at = chTime(observedAt);
     for (const g of games) {
-      for (const m of Object.values(g.markets)) {
-        for (const s of m!.selections) {
-          this.ticks.push(this.row(g, m!.type, s.side, s.id, s, null, "snapshot", at, at));
+      for (const m of allMarkets(g)) {
+        for (const s of m.selections) {
+          this.ticks.push(this.row(g, tickMarket(m.period, m.type), s.side, s.id, s, null, "snapshot", at, at));
         }
       }
     }
@@ -154,7 +163,7 @@ class ClickHouseSink implements TickSink {
     const created = meta?.createdTime ? chTime(meta.createdTime) : received;
     for (const mv of moves) {
       const g = games.get(mv.gameId);
-      if (g) this.ticks.push(this.row(g, mv.market, mv.side, mv.selectionId, mv.to, mv.from, mv.source, created, received));
+      if (g) this.ticks.push(this.row(g, tickMarket(mv.period, mv.market), mv.side, mv.selectionId, mv.to, mv.from, mv.source, created, received));
     }
     this.cap();
   }

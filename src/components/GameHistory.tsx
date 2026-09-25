@@ -3,16 +3,13 @@
 import { createContext, useContext, useMemo, useState } from "react";
 import { useNow } from "@/hooks/useNow";
 import { useRecordedChanges } from "@/hooks/useRecordedChanges";
-import { formatPrice, type OddsFormat } from "@/lib/odds/format";
+import { formatPrice, marketLabel, noLinesText, type OddsFormat } from "@/lib/odds/format";
 import { formatWhen } from "@/lib/odds/freshness";
 import { direction, marketIds, mergeMoves, placeChanges, type LineMove } from "@/lib/odds/history";
-import type { Game, MarketType } from "@/lib/odds/types";
+import type { Game, MarketType, Period } from "@/lib/odds/types";
 
-const MARKETS: [MarketType, string][] = [
-  ["spread", "Spread"],
-  ["total", "Total"],
-  ["moneyline", "Moneyline"],
-];
+/** The board's column order. */
+const MARKETS: MarketType[] = ["spread", "total", "moneyline"];
 /** Moves seen live since the page opened, newest first. A context, so game cards don't re-render on every move. */
 export const MoveLogContext = createContext<LineMove[]>([]);
 
@@ -61,34 +58,37 @@ function MarketMoves({ game, label, moves, format, now }: { game: Game; label: s
 }
 
 /**
- * Every recorded line move for one game, newest first, plus those seen live
- * on this page (the latest may not have reached the database yet).
+ * Every recorded line move for one game in one period, newest first, plus
+ * those seen live on this page (the latest may not have reached the database yet).
  */
-export function GameHistory({ game, format }: { game: Game; format: OddsFormat }) {
+export function GameHistory({ game, period, format }: { game: Game; period: Period; format: OddsFormat }) {
   // Fetched once when opened; moves after that arrive through the live feed.
-  const [markets] = useState(() => marketIds([game]));
+  const [markets] = useState(() => marketIds([game], period));
   const recorded = useRecordedChanges(markets);
   const moveLog = useContext(MoveLogContext);
   const now = useNow(30_000);
   const moves = useMemo(
     () =>
       mergeMoves(
-        moveLog.filter((m) => m.gameId === game.id),
-        recorded.status === "ready" ? placeChanges([game], recorded.changes) : [],
+        moveLog.filter((m) => m.gameId === game.id && m.period === period),
+        recorded.status === "ready" ? placeChanges([game], recorded.changes).filter((m) => m.period === period) : [],
       ),
-    [game, moveLog, recorded],
+    [game, period, moveLog, recorded],
   );
+  // Nothing to ask the database about: the game had no lines in this period when this opened.
+  const noLines = markets.length === 0;
 
   let body;
-  if (recorded.status === "loading" && moves.length === 0) body = <p className="text-muted">Loading line history…</p>;
+  if (noLines && moves.length === 0) body = <p className="text-muted">{noLinesText(period, game.status !== "NOT_STARTED")}.</p>;
+  else if (recorded.status === "loading" && moves.length === 0) body = <p className="text-muted">Loading line history…</p>;
   else if (recorded.status === "error") body = <p className="text-muted">Couldn&apos;t load line history: {recorded.message}</p>;
   else if (moves.length === 0) body = <p className="text-muted">No line moves recorded for this game yet.</p>;
   else {
     body = (
       <div className="space-y-3">
-        {MARKETS.map(([type, label]) => {
+        {MARKETS.map((type) => {
           const list = moves.filter((m) => m.market === type);
-          return list.length ? <MarketMoves key={type} game={game} label={label} moves={list} format={format} now={now} /> : null;
+          return list.length ? <MarketMoves key={type} game={game} label={marketLabel(type, period)} moves={list} format={format} now={now} /> : null;
         })}
       </div>
     );
@@ -97,11 +97,13 @@ export function GameHistory({ game, format }: { game: Game; format: OddsFormat }
   return (
     <div className="mt-2.5 rounded-lg border border-border px-3 py-2.5 text-sm">
       {body}
-      <p className="mt-2 text-xs text-muted">
-        {recorded.status === "off"
-          ? "Showing moves since you opened this page. Line history isn't recorded on this deployment."
-          : "Recorded from DraftKings' live feed while anyone has this page open, so moves at other times can be missing."}
-      </p>
+      {!noLines && (
+        <p className="mt-2 text-xs text-muted">
+          {recorded.status === "off"
+            ? "Showing moves since you opened this page. Line history isn't recorded on this deployment."
+            : "Recorded from DraftKings' live feed while anyone has this page open, so moves at other times can be missing."}
+        </p>
+      )}
     </div>
   );
 }

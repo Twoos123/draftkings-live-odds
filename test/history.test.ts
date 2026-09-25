@@ -4,7 +4,7 @@ import { lineMoves, marketIds, mergeMoves, placeChanges } from "@/lib/odds/histo
 import { normalizeGames } from "@/lib/odds/normalize";
 import { DkStore } from "@/lib/odds/store";
 import type { RecordedChange } from "@/lib/odds/types";
-import { deltaOf, loadSnapshot, loadWsFrames, odds, parseUpdate } from "./helpers";
+import { deltaOf, loadBoardSnapshot, loadSnapshot, loadWsFrames, odds, parseUpdate } from "./helpers";
 
 // ATL Falcons @ GB Packers in the fixture: moneyline ATL +235, total 44.5 (Over −102).
 const GAME = "34118180";
@@ -184,7 +184,7 @@ describe("placing recorded changes on the board", () => {
     const at = "2026-09-22T19:30:00.000Z";
     // Seen live on the page, and also recorded, but by an instance that didn't know the price before.
     const live = lineMoves(
-      [{ gameId: GAME, market: "moneyline", side: "away", selectionId: ATL_ML, from: { line: null, american: 250, decimal: 3.5 }, to: { line: null, american: 260, decimal: 3.6 } }],
+      [{ gameId: GAME, period: "full", market: "moneyline", side: "away", selectionId: ATL_ML, from: { line: null, american: 250, decimal: 3.5 }, to: { line: null, american: 260, decimal: 3.6 } }],
       Date.parse(at),
     );
     const recorded = placeChanges(games.values(), [change({}), change({ from: null, at })]);
@@ -192,6 +192,68 @@ describe("placing recorded changes on the board", () => {
     expect(merged.map((m) => [m.at, m.from?.american ?? null])).toEqual([
       [Date.parse(at), 250],
       [Date.parse("2026-09-22T19:00:00.000Z"), 235],
+    ]);
+  });
+});
+
+describe("line history, 1st half", () => {
+  // LA Chargers @ BUF Bills: moneyline LAC +270 for the game, +200 for the 1st half.
+  const HALF_GAME = "34118212";
+  const at = "2026-09-26T19:00:00.000Z";
+  const both = () => normalizeGames(DkStore.fromSnapshot(loadBoardSnapshot()));
+  const lacMoneyline = (marketId: string, selectionId: string, from: number, to: number): RecordedChange => ({
+    marketId,
+    selectionId,
+    label: "LA Chargers",
+    from: { line: null, american: from, decimal: 1 + from / 100 },
+    to: { line: null, american: to, decimal: 1 + to / 100 },
+    fromSource: "feed",
+    at,
+  });
+
+  it("asks about one period's markets at a time", () => {
+    const games = both();
+    const g = games.get(HALF_GAME)!;
+    expect(marketIds([g], "full")).toEqual(["1_84695645", "2_84695645", "3_84695645"]);
+    expect(marketIds([g], "half")).toEqual(["1_86410040", "2_86410040", "3_86410040"]);
+    expect(marketIds([g])).toHaveLength(6);
+    expect(marketIds([games.get(GAME)!], "half")).toEqual([]); // ATL @ GB: none posted
+  });
+
+  it("places full-game and 1st-half changes in their own period, even at the same moment", () => {
+    const moves = placeChanges(both().values(), [lacMoneyline("1_84695645", "0ML84695645_3", 270, 280), lacMoneyline("1_86410040", "0ML86410040_3", 200, 210)]);
+    expect(moves.map(({ period, market, side }) => ({ period, market, side }))).toEqual([
+      { period: "full", market: "moneyline", side: "away" },
+      { period: "half", market: "moneyline", side: "away" },
+    ]);
+    // Same game, side and time: only the period tells them apart.
+    expect(mergeMoves(moves)).toHaveLength(2);
+  });
+
+  it("merges a live 1st-half move with its recorded copy", () => {
+    const live = lineMoves(
+      [{ gameId: HALF_GAME, period: "half", market: "moneyline", side: "away", selectionId: "0ML86410040_3", from: { line: null, american: 200, decimal: 3 }, to: { line: null, american: 210, decimal: 3.1 } }],
+      Date.parse(at),
+    );
+    const recorded = placeChanges(both().values(), [lacMoneyline("1_86410040", "0ML86410040_3", 200, 210)]);
+    expect(live[0].key).toBe(recorded[0].key);
+    expect(mergeMoves(live, recorded)).toEqual(live);
+  });
+
+  it("records 1st-half price changes from the feed, with the board's price before", () => {
+    const t = new PriceTracker();
+    const sides = boardSides(both().values());
+    expect(sides).toHaveLength(192 + 84); // every full-game side, plus the 14 Sunday games' 1st halves
+    t.takeBoard(sides, "viewer", NOW);
+    expect(t.observe(deltaOf((d) => d.change.selections.push({ id: "0ML86410040_3", displayOdds: odds(210, 3.1) })))).toEqual([
+      {
+        marketId: "1_86410040",
+        selectionId: "0ML86410040_3",
+        label: "LA Chargers",
+        from: { line: null, american: 200, decimal: 3 },
+        to: { line: null, american: 210, decimal: 3.1 },
+        fromSource: "viewer",
+      },
     ]);
   });
 });

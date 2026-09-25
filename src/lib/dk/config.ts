@@ -1,10 +1,12 @@
-// DraftKings endpoints and the NFL "Game Lines" filters. These are the same
+// DraftKings endpoints and the NFL "Game Lines" and "1st Half" filters. These are the same
 // queries sportsbook.draftkings.com makes for its own NFL page (found via the
 // browser's Network tab) — see README "How the data was found".
 
 export const NFL_LEAGUE_ID = "88808";
 /** DraftKings subcategory for the main board: moneyline / spread / total. */
 export const GAME_LINES_SUBCATEGORY_ID = "4518";
+/** The same three markets for the 1st half ("Moneyline 1st Half", ...). */
+export const FIRST_HALF_SUBCATEGORY_ID = "4631";
 
 function env(name: string, fallback: string): string {
   return process.env[name] || fallback;
@@ -18,17 +20,22 @@ export const dkConfig = {
   wsSiteName: env("DK_WS_SITE", "dkusnj"),
 };
 
-const EVENTS_FILTER = `$filter=leagueId eq '${NFL_LEAGUE_ID}' AND clientMetadata/Subcategories/any(s: s/Id eq '${GAME_LINES_SUBCATEGORY_ID}')`;
-const MARKETS_FILTER = `$filter=clientMetadata/subCategoryId eq '${GAME_LINES_SUBCATEGORY_ID}' AND tags/all(t: t ne 'SportcastBetBuilder')`;
+const eventsFilter = (subcategory: string) => `$filter=leagueId eq '${NFL_LEAGUE_ID}' AND clientMetadata/Subcategories/any(s: s/Id eq '${subcategory}')`;
+const marketsFilter = (subcategory: string) => `$filter=clientMetadata/subCategoryId eq '${subcategory}' AND tags/all(t: t ne 'SportcastBetBuilder')`;
+// The push feed takes both subcategories in one subscription. The REST endpoint
+// doesn't (an OR there is HTTP 400), so the board is two requests; see snapshot.ts.
+const FEED_EVENTS_FILTER = `$filter=leagueId eq '${NFL_LEAGUE_ID}' AND clientMetadata/Subcategories/any(s: s/Id eq '${GAME_LINES_SUBCATEGORY_ID}' or s/Id eq '${FIRST_HALF_SUBCATEGORY_ID}')`;
+const FEED_MARKETS_FILTER = `$filter=(clientMetadata/subCategoryId eq '${GAME_LINES_SUBCATEGORY_ID}' or clientMetadata/subCategoryId eq '${FIRST_HALF_SUBCATEGORY_ID}') AND tags/all(t: t ne 'SportcastBetBuilder')`;
 // The push feed also carries markets for other DK products; OSB = online sportsbook.
 const OSB_ONLY = ` and tags/any(t: t eq 'OSB')`;
 
-export function snapshotUrl(): string {
+/** One subcategory of the NFL board (game lines by default). */
+export function snapshotUrl(subcategory = GAME_LINES_SUBCATEGORY_ID): string {
   const params = new URLSearchParams({
     isBatchable: "false",
     templateVars: NFL_LEAGUE_ID,
-    eventsQuery: EVENTS_FILTER,
-    marketsQuery: MARKETS_FILTER,
+    eventsQuery: eventsFilter(subcategory),
+    marketsQuery: marketsFilter(subcategory),
     include: "Events",
     entity: "events",
   });
@@ -55,8 +62,8 @@ export function subscribeMessage(id: string) {
       entity: "events",
       siteName: dkConfig.wsSiteName,
       queryParams: {
-        query: EVENTS_FILTER + OSB_ONLY,
-        includeMarkets: MARKETS_FILTER + OSB_ONLY,
+        query: FEED_EVENTS_FILTER + OSB_ONLY,
+        includeMarkets: FEED_MARKETS_FILTER + OSB_ONLY,
         initialData: false,
         projection: "sportsbook",
         locale: "en",

@@ -1,4 +1,4 @@
-import type { MarketType, Price } from "./types";
+import type { MarketType, Period, Price } from "./types";
 
 // Odds parsing/formatting. DraftKings renders negative American odds with a
 // Unicode minus (U+2212), e.g. "−110", which Number() can't parse.
@@ -47,6 +47,21 @@ export type OddsFormat = "american" | "decimal";
 
 export function formatOdds(p: { american: number; decimal: number }, format: OddsFormat): string {
   return format === "american" ? formatAmerican(p.american) : formatDecimal(p.decimal);
+}
+
+export const PERIOD_LABEL: Record<Period, string> = { full: "Full game", half: "1st half" };
+
+const MARKET_NAME: Record<MarketType, string> = { moneyline: "Moneyline", spread: "Spread", total: "Total" };
+
+/** "Spread" for the full game, "1st-half spread" for the 1st half. */
+export function marketLabel(type: MarketType, period: Period): string {
+  return period === "half" ? `1st-half ${MARKET_NAME[type].toLowerCase()}` : MARKET_NAME[type];
+}
+
+/** Why a game has no lines in a period: DraftKings posts 1st-half lines a few days out and takes them down during the game. */
+export function noLinesText(period: Period, started: boolean): string {
+  const what = period === "half" ? "1st-half lines" : "lines";
+  return started ? `No ${what} right now` : `${what[0].toUpperCase()}${what.slice(1)} not posted yet`;
 }
 
 /** A price as one string: "−6.5 −110" (spread), "44.5 −105" (total) or "+235" (moneyline). */

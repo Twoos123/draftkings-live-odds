@@ -1,5 +1,5 @@
 import type { DkDelta, DkSnapshot, DkUpdateMeta, ParseIssue } from "../dk/schema";
-import { diffGames, normalizeGame, normalizeGames, sideKey, sortGames, withSource, type GamesDiff } from "./normalize";
+import { allMarkets, diffGames, emptyMarkets, normalizeGame, normalizeGames, sideKey, sortGames, withSource, type GamesDiff } from "./normalize";
 import { DkStore } from "./store";
 import type { Game, Move, Price } from "./types";
 
@@ -143,8 +143,8 @@ export class BoardEngine {
     for (const id of touched ?? this.board.keys()) {
       const game = this.board.get(id);
       if (!game) continue;
-      for (const m of Object.values(game.markets)) {
-        for (const s of m!.selections) this.lastPrices.set(sideKey(id, m!.type, s.side), s);
+      for (const m of allMarkets(game)) {
+        for (const s of m.selections) this.lastPrices.set(sideKey(id, m.period, m.type, s.side), s);
       }
     }
 
@@ -156,7 +156,7 @@ export class BoardEngine {
 
     const moves = withSource(diff.moves, source === "ws" ? "ws" : "resync");
     const changedAt = meta?.createdTime ?? (this.opts.toIso ?? ((t: number) => new Date(t).toISOString()))(receivedAt);
-    for (const m of moves) this.history.set(sideKey(m.gameId, m.market, m.side), { prev: m.from, changedAt });
+    for (const m of moves) this.history.set(sideKey(m.gameId, m.period, m.market, m.side), { prev: m.from, changedAt });
     for (const id of diff.removed) {
       for (const map of [this.history, this.lastPrices]) {
         for (const key of map.keys()) if (key.startsWith(`${id}:`)) map.delete(key);
@@ -175,12 +175,12 @@ export class BoardEngine {
   }
 
   private decorate(game: Game): Game {
-    const markets: Game["markets"] = {};
-    for (const m of Object.values(game.markets)) {
-      markets[m!.type] = {
-        ...m!,
-        selections: m!.selections.map((s) => {
-          const h = this.history.get(sideKey(game.id, m!.type, s.side));
+    const markets = emptyMarkets();
+    for (const m of allMarkets(game)) {
+      markets[m.period][m.type] = {
+        ...m,
+        selections: m.selections.map((s) => {
+          const h = this.history.get(sideKey(game.id, m.period, m.type, s.side));
           return h ? { ...s, prev: h.prev, changedAt: h.changedAt } : s;
         }),
       };

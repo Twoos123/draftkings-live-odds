@@ -2,6 +2,8 @@
 --   snapshot: the full board when a server instance starts (baseline)
 --   ws:       a move pushed by DraftKings' live feed
 --   resync:   a move found by the periodic full REST check (i.e. a delta we missed)
+-- `market` is moneyline / spread / total for the full game and half_moneyline /
+-- half_spread / half_total for the 1st half, so market = 'moneyline' still means the full game.
 -- Several server instances can record the same DraftKings move; ReplacingMergeTree
 -- collapses duplicates on (game, market, side, dk_created_at, selection). Query with FINAL.
 -- The app runs these statements itself on first write (src/lib/clickhouse.ts); keep them in sync.

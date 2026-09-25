@@ -43,6 +43,7 @@ describe("DkStore.apply", () => {
     expect(diff.moves).toEqual([
       {
         gameId: GAME,
+        period: "full",
         market: "moneyline",
         side: "away",
         selectionId: "0ML84695613_3",
@@ -71,7 +72,7 @@ describe("DkStore.apply", () => {
     expect(store.selections.get("0OU84695613O4550_1")).toMatchObject({ marketId: "3_84695613", outcomeType: "Over", points: 45.5 });
 
     const after = normalizeGames(store);
-    expect(after.get(GAME)!.markets.total!.selections.map((s) => [s.side, s.line, s.american])).toEqual([
+    expect(after.get(GAME)!.markets.full.total!.selections.map((s) => [s.side, s.line, s.american])).toEqual([
       ["over", 45.5, -110],
       ["under", 45.5, -110],
     ]);
@@ -91,17 +92,17 @@ describe("DkStore.apply", () => {
       }),
     );
     expect(res.unresolved).toEqual([]);
-    const away = normalizeGames(store).get(GAME)!.markets.spread!.selections[0];
+    const away = normalizeGames(store).get(GAME)!.markets.full.spread!.selections[0];
     expect(away).toMatchObject({ id: "0HC84695613P650_3", line: 6.5, american: -115 });
   });
 
   it("suspends and removes markets and games", () => {
     const { store } = setup();
     store.apply(deltaOf((d) => d.change.markets.push({ id: "2_84695613", isSuspended: true })));
-    expect(normalizeGames(store).get(GAME)!.markets.spread!.suspended).toBe(true);
+    expect(normalizeGames(store).get(GAME)!.markets.full.spread!.suspended).toBe(true);
 
     store.apply(deltaOf((d) => d.remove.markets.push("2_84695613")));
-    expect(normalizeGames(store).get(GAME)!.markets.spread).toBeUndefined();
+    expect(normalizeGames(store).get(GAME)!.markets.full.spread).toBeUndefined();
     expect([...store.selections.values()].some((s) => s.marketId === "2_84695613")).toBe(false);
 
     const res = store.apply(deltaOf((d) => d.remove.events.push(GAME)));

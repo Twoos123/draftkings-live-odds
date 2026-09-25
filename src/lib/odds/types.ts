@@ -1,10 +1,16 @@
 import type { DkDelta } from "../dk/schema";
 
 // The clean shape we serve, independent of DraftKings' wire format:
-// game -> market -> side -> line + odds. Shared by the server and the browser.
+// game -> period -> market -> side -> line + odds. Shared by the server and the browser.
 
 export type MarketType = "moneyline" | "spread" | "total";
 export type Side = "away" | "home" | "over" | "under";
+/** The whole game, or its 1st half (DraftKings' separate "1st Half" markets). */
+export type Period = "full" | "half";
+export const PERIODS = ["full", "half"] as const satisfies readonly Period[];
+
+/** A period's markets by type. Empty when DraftKings has none posted (1st-half lines go up a few days out and come down mid-game). */
+export type PeriodMarkets = Partial<Record<MarketType, Market>>;
 
 export interface Price {
   /** Spread or total points; null for moneyline. */
@@ -26,6 +32,7 @@ export interface Selection extends Price {
 export interface Market {
   id: string;
   type: MarketType;
+  period: Period;
   suspended: boolean;
   /**
    * [away, home] for moneyline/spread, [over, under] for totals: the sides
@@ -51,11 +58,12 @@ export interface Game {
   status: string;
   away: Team;
   home: Team;
-  markets: Partial<Record<MarketType, Market>>;
+  markets: Record<Period, PeriodMarkets>;
 }
 
 export interface PriceMove {
   gameId: string;
+  period: Period;
   market: MarketType;
   side: Side;
   selectionId: string;

@@ -5,7 +5,7 @@ import type { Feed, FeedHandlers } from "@/lib/dk/feed";
 import { parseWsMessage } from "@/lib/dk/schema";
 import { OddsHub } from "@/lib/hub";
 import { BoardEngine } from "@/lib/odds/engine";
-import { odds, loadSnapshot, updateFrame } from "./helpers";
+import { odds, loadBoardSnapshot, updateFrame } from "./helpers";
 
 // Per-update cost of our own code, both halves of the pipeline. Doubles as a budget check.
 
@@ -36,9 +36,11 @@ function time(run: (i: number) => void) {
 
 const us = (ms: number) => `${(ms * 1000).toFixed(0)} µs`;
 
+// The worst case: a 1st-half price on a game with both periods posted (LA Chargers @ BUF Bills),
+// so rebuilding the game means all six of its markets.
 const frames = [200, 210].map((a) =>
   updateFrame(
-    { change: { selections: [{ id: "0ML84695613_3", label: "ATL Falcons", displayOdds: odds(a, 1 + a / 100), trueOdds: 1 + a / 100 }] } },
+    { change: { selections: [{ id: "0ML86410040_3", label: "LA Chargers", displayOdds: odds(a, 1 + a / 100), trueOdds: 1 + a / 100 }] } },
     { createdTime: new Date().toISOString() },
   ),
 );
@@ -46,7 +48,7 @@ const frames = [200, 210].map((a) =>
 describe("per-update processing cost", () => {
   it("server: raw DK frame -> parsed -> SSE bytes for every viewer (+ its own board)", async () => {
     let feed!: IdleFeed;
-    const snapshot = loadSnapshot();
+    const snapshot = loadBoardSnapshot();
     const hub = new OddsHub({ fetchSnapshot: async () => structuredClone(snapshot), createFeed: (h) => (feed = new IdleFeed(h)), sink: noopSink, now: Date.now, instanceId: "perf" });
     let bytes = 0;
     hub.subscribe((_msg, frame) => (bytes = frame.length));
@@ -62,7 +64,7 @@ describe("per-update processing cost", () => {
   });
 
   it("browser: relayed delta -> board updated (rebuild one game, diff, decorate)", async () => {
-    const snapshot = loadSnapshot();
+    const snapshot = loadBoardSnapshot();
     let changes = 0;
     const engine = new BoardEngine({ fetchSnapshot: async () => structuredClone(snapshot), onChange: () => changes++, now: Date.now });
     await engine.resync();

@@ -15,7 +15,7 @@ import WebSocket from "ws";
 import { subscribeMessage, wsUrl } from "../src/lib/dk/config";
 import { parseWsMessage, type DkDelta } from "../src/lib/dk/schema";
 import { fetchSnapshot } from "../src/lib/dk/snapshot";
-import { normalizeGames } from "../src/lib/odds/normalize";
+import { allMarkets, normalizeGames } from "../src/lib/odds/normalize";
 import { DkStore } from "../src/lib/odds/store";
 
 const minutes = Number(process.argv[2] ?? 15);
@@ -24,13 +24,13 @@ const POLL_MS = 5_000;
 const t = () => new Date().toISOString().slice(11, 23);
 const log = (...parts: unknown[]) => console.log(t(), ...parts);
 
-/** "ATL Falcons @ GB Packers | spread away" -> "+6 -108" (or "locked" when suspended). */
+/** "ATL Falcons @ GB Packers | half spread away" -> "+3 -108" (or "locked" when suspended). */
 function flatten(store: DkStore): Map<string, string> {
   const out = new Map<string, string>();
   for (const g of normalizeGames(store).values()) {
-    for (const m of Object.values(g.markets)) {
-      for (const s of m!.selections) {
-        out.set(`${g.name} | ${m!.type} ${s.side}`, `${s.line ?? ""} ${s.american}${m!.suspended ? " (locked)" : ""}`.trim());
+    for (const m of allMarkets(g)) {
+      for (const s of m.selections) {
+        out.set(`${g.name} | ${m.period} ${m.type} ${s.side}`, `${s.line ?? ""} ${s.american}${m.suspended ? " (locked)" : ""}`.trim());
       }
     }
   }

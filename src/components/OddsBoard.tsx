@@ -4,9 +4,10 @@ import { useMemo, useState } from "react";
 import { useNow } from "@/hooks/useNow";
 import { useOddsFormat } from "@/hooks/useOddsFormat";
 import { useOddsStream, type ClientLatency } from "@/hooks/useOddsStream";
-import type { OddsFormat } from "@/lib/odds/format";
+import { usePeriod } from "@/hooks/usePeriod";
+import { PERIOD_LABEL, type OddsFormat } from "@/lib/odds/format";
 import { describeFreshness, formatAgo, type Freshness, type Tone } from "@/lib/odds/freshness";
-import type { BoardStatus, FeedStatus, Game, LatencyStats } from "@/lib/odds/types";
+import { PERIODS, type BoardStatus, type FeedStatus, type Game, type LatencyStats, type Period } from "@/lib/odds/types";
 import { FeedDetails } from "./FeedDetails";
 import { GameCard, GRID } from "./GameCard";
 import { MoveLogContext } from "./GameHistory";
@@ -99,18 +100,25 @@ function StatusPill({ fresh, board, now }: { fresh: Freshness; board: BoardStatu
   );
 }
 
-function FormatToggle({ format, onChange }: { format: OddsFormat; onChange: (f: OddsFormat) => void }) {
+const FORMAT_OPTIONS: [OddsFormat, string][] = [
+  ["american", "American"],
+  ["decimal", "Decimal"],
+];
+const PERIOD_OPTIONS: [Period, string][] = PERIODS.map((p) => [p, PERIOD_LABEL[p]]);
+
+/** Two or more buttons, one pressed: the odds format and period pickers. */
+function SegmentedToggle<T extends string>({ label, options, value, onChange }: { label: string; options: [T, string][]; value: T; onChange: (v: T) => void }) {
   return (
-    <div className="inline-flex shrink-0 rounded-full border border-border bg-surface p-0.5 text-sm" role="group" aria-label="Odds format">
-      {(["american", "decimal"] as const).map((f) => (
+    <div className="inline-flex shrink-0 rounded-full border border-border bg-surface p-0.5 text-sm" role="group" aria-label={label}>
+      {options.map(([v, text]) => (
         <button
-          key={f}
+          key={v}
           type="button"
-          onClick={() => onChange(f)}
-          aria-pressed={format === f}
-          className={`rounded-full px-3 py-1 capitalize transition-colors ${format === f ? "bg-foreground text-background" : "text-muted hover:text-foreground"}`}
+          onClick={() => onChange(v)}
+          aria-pressed={value === v}
+          className={`whitespace-nowrap rounded-full px-2.5 py-1 transition-colors sm:px-3 ${value === v ? "bg-foreground text-background" : "text-muted hover:text-foreground"}`}
         >
-          {f}
+          {text}
         </button>
       ))}
     </div>
@@ -120,6 +128,7 @@ function FormatToggle({ format, onChange }: { format: OddsFormat; onChange: (f: 
 export function OddsBoard() {
   const { games, moveLog, feed, board, connection, lastMessageAt, latency, refresh, refreshing, clockOffsetMs } = useOddsStream();
   const [format, setFormat] = useOddsFormat();
+  const [period, setPeriod] = usePeriod();
   const [query, setQuery] = useState("");
   const [openedAt] = useState(() => Date.now());
   const now = useNow();
@@ -152,26 +161,26 @@ export function OddsBoard() {
           </p>
         </header>
 
-        <div className="sticky top-0 z-20 -mx-4 mt-5 border-b border-border bg-background/85 px-4 py-3 backdrop-blur sm:-mx-6 sm:px-6">
-          <div className="flex flex-wrap items-center gap-2">
+        <div className="sticky top-0 z-20 -mx-4 mt-5 border-b border-border bg-background/85 px-4 py-2.5 backdrop-blur sm:-mx-6 sm:px-6 sm:py-3">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5 sm:gap-y-2">
             <StatusPill fresh={fresh} board={board} now={now} />
             <LatencyBadge latency={latency} feed={feed} />
-            {/* Phones: status + Refresh on one row, search + format below. Wider: one row. */}
+            {/* Status + Refresh on one row; search and the two toggles below (phones: search on its own row). */}
             <button
               type="button"
               onClick={refresh}
               disabled={refreshing}
               aria-label="Refresh: re-check every line with DraftKings now"
               title="Re-check every line with DraftKings now"
-              className="ml-auto inline-flex shrink-0 items-center gap-1.5 rounded-full border border-border bg-surface px-3 py-1.5 text-sm font-medium hover:bg-cell disabled:opacity-60 sm:order-last sm:ml-0"
+              className="ml-auto inline-flex shrink-0 items-center gap-1.5 rounded-full border border-border bg-surface px-3 py-1.5 text-sm font-medium hover:bg-cell disabled:opacity-60"
             >
               <svg className={`h-3.5 w-3.5 ${refreshing ? "animate-spin" : ""}`} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" aria-hidden>
                 <path d="M13.5 8a5.5 5.5 0 1 1-1.61-3.89M13.5 2.5v3h-3" />
               </svg>
               <span>{refreshing ? "Checking…" : "Refresh"}</span>
             </button>
-            <div className="flex w-full items-center gap-2 sm:ml-auto sm:w-auto">
-              <label className="relative min-w-0 flex-1 sm:w-52 sm:flex-none">
+            <div className="flex w-full flex-wrap items-center gap-x-2 gap-y-1.5 sm:gap-y-2">
+              <label className="relative min-w-0 basis-full sm:max-w-xs sm:flex-1 sm:basis-auto">
                 <span className="sr-only">Search teams</span>
                 <svg className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.75" aria-hidden>
                   <circle cx="7" cy="7" r="4.5" />
@@ -185,7 +194,10 @@ export function OddsBoard() {
                   className="w-full rounded-full border border-border bg-surface py-1.5 pl-8 pr-3 text-sm outline-none placeholder:text-muted focus:border-foreground/40"
                 />
               </label>
-              <FormatToggle format={format} onChange={setFormat} />
+              <SegmentedToggle label="Game period" options={PERIOD_OPTIONS} value={period} onChange={setPeriod} />
+              <div className="ml-auto">
+                <SegmentedToggle label="Odds format" options={FORMAT_OPTIONS} value={format} onChange={setFormat} />
+              </div>
             </div>
           </div>
           {fresh.detail && (
@@ -196,7 +208,7 @@ export function OddsBoard() {
         </div>
 
         {games.size > 0 && (
-          <LatestMoves games={games} moveLog={moveLog} format={format} clockOffsetMs={clockOffsetMs} openedAt={openedAt}
+          <LatestMoves key={period} games={games} period={period} moveLog={moveLog} format={format} clockOffsetMs={clockOffsetMs} openedAt={openedAt}
             lastFeedUpdateAt={feed?.lastMessageAt ?? null}
             feedSubscribedAt={feed?.subscribedAt ?? null}
             historyOn={feed?.history != null}
@@ -225,14 +237,24 @@ export function OddsBoard() {
                 {label} <span className="font-normal normal-case tracking-normal">· {dayGames.length} {dayGames.length === 1 ? "game" : "games"}</span>
               </h2>
               <div className="overflow-hidden rounded-xl border border-border bg-surface">
-                <div className={`${GRID} border-b border-border px-3 py-2 text-[11px] font-medium uppercase tracking-wider text-muted sm:px-4`}>
-                  <span>Game</span>
+                <div className={`${GRID} border-b border-border px-2.5 py-2 text-[11px] font-medium uppercase tracking-wider text-muted sm:px-4`}>
+                  {period === "half" ? (
+                    <span className="whitespace-nowrap">
+                      {/* Phones have room for two characters here. */}
+                      <span className="sm:hidden" title={PERIOD_LABEL.half}>
+                        1H
+                      </span>
+                      <span className="hidden sm:inline">Game · {PERIOD_LABEL.half}</span>
+                    </span>
+                  ) : (
+                    <span>Game</span>
+                  )}
                   <span className="text-center">Spread</span>
                   <span className="text-center">Total</span>
                   <span className="text-center">Moneyline</span>
                 </div>
                 {dayGames.map((g) => (
-                  <GameCard key={g.id} game={g} format={format} clockOffsetMs={clockOffsetMs} />
+                  <GameCard key={g.id} game={g} period={period} format={format} clockOffsetMs={clockOffsetMs} />
                 ))}
               </div>
             </section>
@@ -242,7 +264,7 @@ export function OddsBoard() {
         <FeedDetails feed={feed} board={board} latency={latency} now={now} serverNow={serverNow} />
 
         <footer className="mt-6 text-xs leading-relaxed text-muted">
-          Odds from DraftKings Sportsbook (New Jersey), pushed from DraftKings&apos; live feed and fully re-checked every minute. Main markets only. Not
+          Odds from DraftKings Sportsbook (New Jersey), pushed from DraftKings&apos; live feed and fully re-checked every minute. Main markets only (full game and 1st half). Not
           affiliated with DraftKings.{" "}
           <a className="underline" href={REPO_URL}>
             Source code

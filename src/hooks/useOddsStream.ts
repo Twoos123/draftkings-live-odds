@@ -25,8 +25,8 @@ const HIDDEN_CLOSE_MS = 60_000;
 const RECHECK_LIVE_MS = 60_000;
 /** …and while it's down, so the board keeps moving without it. */
 const RECHECK_FALLBACK_MS = 5_000;
-/** Line moves kept in memory for this page, newest first. */
-const MOVE_LOG_SIZE = 200;
+/** Line moves kept in memory for this page, newest first; full game and 1st half together. */
+const MOVE_LOG_SIZE = 400;
 /** At most this often, send the server our board when it asks (for line history). */
 const SEND_BOARD_GAP_MS = 30_000;
 

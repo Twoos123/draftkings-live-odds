@@ -3,10 +3,10 @@
 import { useMemo, useState } from "react";
 import { useNow } from "@/hooks/useNow";
 import { useRecordedChanges } from "@/hooks/useRecordedChanges";
-import { formatPrice, type OddsFormat } from "@/lib/odds/format";
+import { formatPrice, PERIOD_LABEL, type OddsFormat } from "@/lib/odds/format";
 import { formatAgo, formatWhen } from "@/lib/odds/freshness";
 import { direction, marketIds, mergeMoves, placeChanges, type LineMove } from "@/lib/odds/history";
-import type { Game, MarketType } from "@/lib/odds/types";
+import type { Game, MarketType, Period } from "@/lib/odds/types";
 
 const MARKET_LABEL: Record<MarketType, string> = { moneyline: "Moneyline", spread: "Spread", total: "Total" };
 const MAX_SHOWN = 6;
@@ -16,13 +16,14 @@ function who(g: Game, m: LineMove): string {
 }
 
 /**
- * The last few line moves across the board; click one to jump to its game.
- * With line history on, that includes moves recorded before this page opened;
- * otherwise it's moves since then, and it says so. Either way it shows the
- * feed is alive during quiet spells (most DK updates don't move a main line).
+ * The last few line moves across the board in one period; click one to jump
+ * to its game. With line history on, that includes moves recorded before this
+ * page opened; otherwise it's moves since then, and it says so. Either way it
+ * shows the feed is alive during quiet spells (most DK updates don't move a main line).
  */
 export function LatestMoves({
   games,
+  period,
   moveLog,
   format,
   clockOffsetMs,
@@ -32,6 +33,7 @@ export function LatestMoves({
   historyOn,
 }: {
   games: Map<string, Game>;
+  period: Period;
   /** Moves seen live since this page opened, newest first. */
   moveLog: LineMove[];
   format: OddsFormat;
@@ -45,25 +47,30 @@ export function LatestMoves({
   /** The server records line history, so earlier moves can be shown too. */
   historyOn: boolean;
 }) {
-  // Earlier moves are fetched once, for the board as it first loaded; from then on the live feed adds them as they happen.
-  const [boardMarkets] = useState(() => marketIds(games.values()).sort());
+  // Earlier moves are fetched once, for the board as it first loaded (keyed by period by the caller, so
+  // switching fetches the other period's); from then on the live feed adds them as they happen.
+  const [boardMarkets] = useState(() => marketIds(games.values(), period).sort());
   const recorded = useRecordedChanges(historyOn ? boardMarkets : null, `moves&limit=${MAX_SHOWN * 4}`);
   const moves = useMemo(
     () =>
       mergeMoves(moveLog, recorded.status === "ready" ? placeChanges(games.values(), recorded.changes) : [])
-        .filter((m) => m.from && games.has(m.gameId))
+        .filter((m) => m.period === period && m.from && games.has(m.gameId))
         .slice(0, MAX_SHOWN),
-    [games, moveLog, recorded],
+    [games, period, moveLog, recorded],
   );
+  const anyLines = useMemo(() => marketIds(games.values(), period).length > 0, [games, period]);
   const recordedAny = recorded.status === "ready";
   const browserNow = useNow(5_000);
   const now = browserNow + clockOffsetMs;
   const watchedMin = Math.floor((browserNow - openedAt) / 60_000);
-  const quiet = recordedAny
-    ? "No line moves recorded for these games yet."
-    : watchedMin < 1
-      ? "No main lines have moved yet."
-      : `No main lines have moved in the ${watchedMin} min you've been watching.`;
+  const lines = period === "half" ? "1st-half lines" : "main lines";
+  const quiet = !anyLines
+    ? `DraftKings hasn't posted ${lines} for any game right now.`
+    : recordedAny
+      ? `No ${period === "half" ? "1st-half " : ""}line moves recorded for these games yet.`
+      : watchedMin < 1
+        ? `No ${lines} have moved yet.`
+        : `No ${lines} have moved in the ${watchedMin} min you've been watching.`;
   const heartbeat = lastFeedUpdateAt
     ? `DraftKings last sent an update ${formatAgo(now - Date.parse(lastFeedUpdateAt))}`
     : feedSubscribedAt
@@ -72,9 +79,9 @@ export function LatestMoves({
 
   return (
     <section aria-labelledby="latest-moves" className="mt-6 rounded-xl border border-border bg-surface px-4 py-3">
-      <div className="flex items-baseline justify-between gap-3">
+      <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5">
         <h2 id="latest-moves" className="text-xs font-semibold uppercase tracking-[0.12em] text-muted">
-          Latest line moves
+          Latest line moves{period === "half" && ` · ${PERIOD_LABEL.half}`}
         </h2>
         <span className="text-xs text-muted">{recordedAny ? "recorded while anyone has this page open" : "since you opened this page"}</span>
       </div>

@@ -1,4 +1,4 @@
-import { oddsOf } from "../odds/normalize";
+import { allMarkets, oddsOf } from "../odds/normalize";
 import type { BoardSide, FromSource, Game, Price } from "../odds/types";
 import type { DkDelta } from "./schema";
 
@@ -31,9 +31,9 @@ interface Placed {
 export function boardSides(games: Iterable<Game>): BoardSide[] {
   const sides: BoardSide[] = [];
   for (const g of games) {
-    for (const m of Object.values(g.markets)) {
-      for (const s of m!.selections) {
-        sides.push({ marketId: m!.id, selectionId: s.id, label: s.label, line: s.line, american: s.american, decimal: s.decimal });
+    for (const m of allMarkets(g)) {
+      for (const s of m.selections) {
+        sides.push({ marketId: m.id, selectionId: s.id, label: s.label, line: s.line, american: s.american, decimal: s.decimal });
       }
     }
   }

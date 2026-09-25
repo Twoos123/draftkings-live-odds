@@ -6,6 +6,10 @@ const ITEMS: [string, string][] = [
   ],
   ["Total", "Bet on the two teams' combined score finishing Over (O) or Under (U) the number."],
   ["Decimal", "What comes back per $1 staked, stake included: 2.50 returns $2.50."],
+  [
+    "Full game / 1st half",
+    "Switch every line on the page between the whole game and its 1st half, which is settled on the score at halftime. DraftKings posts 1st-half lines a few days before kickoff and takes them down during the game.",
+  ],
   ["▲ ▼ and crossed-out numbers", "The line just moved. Green went up, red went down; the old number stays crossed out for 10 minutes."],
   ["Lock icon", "DraftKings has paused betting on that market, usually around breaking news or kickoff."],
   ["Hover a price", "See the implied chance of winning that the price represents."],

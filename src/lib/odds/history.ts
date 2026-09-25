@@ -1,9 +1,11 @@
-import type { Game, Market, MarketType, Price, PriceMove, RecordedChange, Side } from "./types";
+import { allMarkets } from "./normalize";
+import type { Game, Market, MarketType, Period, Price, PriceMove, RecordedChange, Side } from "./types";
 
 /** A line move on the board, either recorded (line history) or seen live on this page. */
 export interface LineMove {
   key: string;
   gameId: string;
+  period: Period;
   market: MarketType;
   side: Side;
   /** Null when the price before wasn't recorded. */
@@ -19,8 +21,8 @@ export function direction(from: Price, to: Price): number {
   return Math.sign((to.line ?? 0) - (from.line ?? 0));
 }
 
-function moveKey(gameId: string, market: MarketType, side: Side, at: number): string {
-  return `${gameId}:${market}:${side}:${at}`;
+function moveKey(gameId: string, period: Period, market: MarketType, side: Side, at: number): string {
+  return `${gameId}:${period}:${market}:${side}:${at}`;
 }
 
 /** Recorded changes carry DK's label for the side; the board says which side has it. */
@@ -31,29 +33,39 @@ function sideOf(game: Game, market: Market, label: string): Side | null {
   return label === game.away.name ? "away" : label === game.home.name ? "home" : null;
 }
 
-/** The DraftKings markets on the board, to ask /api/history about. */
-export function marketIds(games: Iterable<Game>): string[] {
-  return [...games].flatMap((g) => Object.values(g.markets).map((m) => m!.id));
+/** The DraftKings markets on the board, to ask /api/history about; only one period's if given. */
+export function marketIds(games: Iterable<Game>, period?: Period): string[] {
+  return [...games].flatMap((g) => allMarkets(g).filter((m) => !period || m.period === period).map((m) => m.id));
 }
 
 /** Recorded changes placed on the board. Changes for markets no longer on it are dropped. */
 export function placeChanges(games: Iterable<Game>, changes: RecordedChange[]): LineMove[] {
   const markets = new Map<string, { game: Game; market: Market }>();
-  for (const g of games) for (const m of Object.values(g.markets)) markets.set(m!.id, { game: g, market: m! });
+  for (const g of games) for (const m of allMarkets(g)) markets.set(m.id, { game: g, market: m });
   const moves: LineMove[] = [];
   for (const c of changes) {
     const hit = markets.get(c.marketId);
     const side = hit && sideOf(hit.game, hit.market, c.label);
     if (!hit || !side) continue;
+    const { game, market } = hit;
     const at = Date.parse(c.at);
-    moves.push({ key: moveKey(hit.game.id, hit.market.type, side, at), gameId: hit.game.id, market: hit.market.type, side, from: c.from, to: c.to, at });
+    moves.push({ key: moveKey(game.id, market.period, market.type, side, at), gameId: game.id, period: market.period, market: market.type, side, from: c.from, to: c.to, at });
   }
   return moves;
 }
 
 /** Moves the board engine found in one update, stamped with when DraftKings made them. */
 export function lineMoves(moves: PriceMove[], at: number): LineMove[] {
-  return moves.map((m) => ({ key: moveKey(m.gameId, m.market, m.side, at), gameId: m.gameId, market: m.market, side: m.side, from: m.from, to: m.to, at }));
+  return moves.map((m) => ({
+    key: moveKey(m.gameId, m.period, m.market, m.side, at),
+    gameId: m.gameId,
+    period: m.period,
+    market: m.market,
+    side: m.side,
+    from: m.from,
+    to: m.to,
+    at,
+  }));
 }
 
 /**
